@@ -15,8 +15,10 @@ from psycopg2 import sql
 from contextlib import contextmanager
 import io
 
+# 確保這些導入是正確且不重複的
 import google.auth
 from google.cloud import firestore
+from google.oauth2 import service_account # <-- 這是關鍵的修改
 from google.cloud.firestore_v1.base_client import BaseClient
 
 # 從同級目錄導入 情感top3提出_dandadan_fast 模組
@@ -147,7 +149,6 @@ def load_anime_data_from_db():
     AVAILABLE_ANIME_NAMES = sorted(list(temp_available_anime_names))
     print(f"--- PostgreSQL 數據載入完成，耗時 {time.time() - start_time:.2f} 秒 ---")
 
-
 @app.on_event("startup")
 async def startup_event():
     print(f"伺服器啟動中...")
@@ -155,18 +156,18 @@ async def startup_event():
 
     global db, TAG_COMBINATION_MAPPING, EMOTION_CATEGORY_MAPPING
     try:
-        # ====== 修改這裡：從環境變數讀取 Firestore 憑證 ======
         firestore_credentials_json = os.getenv("FIRESTORE_CREDENTIALS_JSON")
         if firestore_credentials_json:
             credentials_info = json.loads(firestore_credentials_json)
-            db = firestore.Client(database="anime-label", credentials=firestore.credentials.ServiceAccount.from_service_account_info(credentials_info))
+            # ====== 關鍵修改在這裡 ======
+            db = firestore.Client(database="anime-label", credentials=service_account.Credentials.from_service_account_info(credentials_info))
+            # ==========================
             print("INFO: Firestore 客戶端初始化成功 (從環境變數)。")
         else:
             print("ERROR: 未找到 FIRESTORE_CREDENTIALS_JSON 環境變數。請在部署環境中設定此變數。")
-            sys.exit(1) # 如果沒有憑證，應用程式無法正常啟動
-        # ==================================================
+            sys.exit(1)
     except Exception as e:
-        print(f"ERROR: Firestore 客戶端初始化失敗: {e}"); sys.exit(1)
+        print(f"ERROR: Firestore 客戶端初始化失敗: {e}"); traceback.print_exc(); sys.exit(1) # 添加 traceback 方便偵錯
 
     print("\n--- 開始從 Firestore 載入情感映射檔案 ---")
     start_time = time.time()
