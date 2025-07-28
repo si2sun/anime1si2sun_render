@@ -1,6 +1,7 @@
 import pandas as pd
+import numpy as np
 from fastapi import FastAPI, HTTPException, Request, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
@@ -8,368 +9,412 @@ import os
 import sys
 import json
 import unicodedata
-import time
-import traceback
 import psycopg2
 from psycopg2 import sql
 from contextlib import contextmanager
-import io
+import cProfile
+import pstats
+import time
+import traceback
+import logging # 新增日誌模組
 
-# 確保這些導入是正確且不重複的
-import google.auth
+# 導入 Firestore 相關模組
 from google.cloud import firestore
-from google.oauth2 import service_account # <-- 這是關鍵的修改
-from google.cloud.firestore_v1.base_client import BaseClient
 
 # 從同級目錄導入 情感top3提出_dandadan_fast 模組
 try:
-    from 情感top3提出_dandadan_fast_json import get_top3_emotions_fast, get_top5_density_moments
+    from 情感top3提出_dandadan_fast_json import get_top3_emotions_fast
 except ImportError:
-    print("ERROR: 無法導入 '情感top3提出_dandadan_fast_json' 模組中的函式。")
+    # 使用 logging 替代 print
+    logging.error("ERROR: 無法導入 '情感top3提出_dandadan_fast_json' 模組。請確保該檔案存在且在可被Python找到的路徑上。")
     sys.exit(1)
+
+# 配置日誌
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 app = FastAPI()
 
-# ====== CORS 配置 ======
-# 生產環境允許所有來源，但限制特定方法和標頭
+# ====== CORS 配置 (保持不變) ======
+origins = [
+    "http://localhost",
+    "http://127.0.0.1",
+    "http://127.0.0.1:5000",
+    # 部署到 Render 後，需要新增你的 Render 服務網址
+    # 例如: "https://your-service-name.onrender.com"
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 生產環境可改為具體域名
+    allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
-templates = Jinja2Templates(directory="templates")
+templates = Jinja2Templates(directory=".")
 
 # ====== PostgreSQL 資料庫配置 ======
-DB_HOST = os.getenv("DB_HOST", "")
-DB_PORT = os.getenv("DB_PORT", "")
-DB_NAME = os.getenv("DB_NAME", "")
-DB_USER = os.getenv("DB_USER", "")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "")
+# 建議從環境變數讀取資料庫憑證
+DB_HOST = os.getenv("DB_HOST", "35.223.124.201")
+DB_PORT = os.getenv("DB_PORT", "5432")
+DB_NAME = os.getenv("DB_NAME", "anime1si2sun")
+DB_USER = os.getenv("DB_USER", "postgres")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "lty890509")
+
+DATABASE_URL = f"dbname={DB_NAME} user={DB_USER} password={DB_PASSWORD} host={DB_HOST} port={DB_PORT}"
 
 @contextmanager
 def get_db_connection():
-    """建立並管理 PostgreSQL 資料庫連接的上下文管理器。"""
     conn = None
     try:
-        conn = psycopg2.connect(
-            host=DB_HOST,
-            port=DB_PORT,
-            database=DB_NAME,
-            user=DB_USER,
-            password=DB_PASSWORD
-        )
+        conn = psycopg2.connect(DATABASE_URL)
         yield conn
+    except psycopg2.Error as e:
+        logging.error(f"資料庫連線錯誤: {e}") # 使用 logging 替代 print
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"無法連接到資料庫或資料庫操作失敗: {e}")
     finally:
         if conn:
             conn.close()
 
-# 全域變數，用於儲存已載入的動漫數據和 URL
+# 變數
 AVAILABLE_ANIME_NAMES = []
-YOUTUBE_ANIME_EPISODE_URLS = {} # {動畫名: {集數: video_id}}
-BAHAMUT_ANIME_EPISODE_URLS = {} # {動畫名: {集數: url}}
-ANIME_COVER_IMAGE_URLS = {} # {動畫名: 封面圖URL}
-ANIME_TAGS_DB = {} # {動畫名: [tag1, tag2]}
+YOUTUBE_ANIME_EPISODE_URLS = {}
+BAHAMUT_ANIME_EPISODE_URLS = {}
+ANIME_COVER_IMAGE_URLS = {}
+ANIME_TAGS_DB = {}
+TAG_COMBINATION_MAPPING = {}
+EMOTION_CATEGORY_MAPPING = {}
 
-# Firestore 客戶端
-db: BaseClient = None # 在 startup_event 中初始化
+# Firestore 客戶端變數
+db = None
 
-# 情感映射
-TAG_COMBINATION_MAPPING = {} # {作品分類: [情感分類1, 情感分類2]}
-EMOTION_CATEGORY_MAPPING = {} # {情感分類: [情緒1, 情緒2]}
+# 建議透過環境變數 GOOGLE_APPLICATION_CREDENTIALS 或 GOOGLE_CLOUD_PROJECT 來初始化 Firestore
+# 或將服務帳號 JSON 內容存入環境變數 GOOGLE_APPLICATION_CREDENTIALS_JSON
+# 如果檔案存在且路徑正確，可以這樣設定
+# os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "animetext-anime1si2sun.json" 
+# 更好的方式是將 JSON 內容讀取進來，或者讓 Firestore Client 自動查找
+# 如果 'animetext-anime1si2sun.json' 在應用程式根目錄，並在 Dockerfile 中 COPY 進去，這樣寫可能可以。
+# 但更穩健的方案是使用 GOOGLE_APPLICATION_CREDENTIALS_JSON 環境變數 (下面會在 startup_event 處理)
 
-def load_anime_data_from_db():
-    print("\n--- 開始從 PostgreSQL 載入動漫數據 ---")
-    start_time = time.time()
+def load_anime_data_mapping_from_db():
+    """
+    啟動時從 PostgreSQL 的 anime_url 表加載所有 URL、封面圖資訊和作品分類。
+    """
     global AVAILABLE_ANIME_NAMES, YOUTUBE_ANIME_EPISODE_URLS, BAHAMUT_ANIME_EPISODE_URLS, ANIME_COVER_IMAGE_URLS, ANIME_TAGS_DB
     
-    # 徹底移除 "ED開始秒數" 的查询
-    query = 'SELECT "作品名", "集數", "巴哈動畫瘋網址", "YT網址", "封面圖", "作品分類" FROM anime_url ORDER BY "作品名", "集數";'
+    total_process_start_time = time.time()
+    logging.info("INFO: 從資料庫加載動漫數據映射...") # 使用 logging 替代 print
     
-    temp_available_anime_names = set() # 用 set 避免重複
+    AVAILABLE_ANIME_NAMES.clear()
+    YOUTUBE_ANIME_EPISODE_URLS.clear()
+    BAHAMUT_ANIME_EPISODE_URLS.clear()
+    ANIME_COVER_IMAGE_URLS.clear()
+    ANIME_TAGS_DB.clear()
     
-    with get_db_connection() as conn, conn.cursor() as cur:
-        cur.execute(query)
-        rows = cur.fetchall()
+    unique_anime_names_normalized = set()
 
-    if not rows:
-        print("⚠️ 警告：資料庫的 'anime_url' 表中沒有找到任何數據。")
-        return
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL("""
+                    SELECT "作品名", "集數", "巴哈動畫瘋網址", "YT網址", "封面圖", "作品分類"
+                    FROM anime_url ORDER BY "作品名", "集數";
+                    """)
+                )
+                rows = cur.fetchall()
 
-    for row in rows:
-        anime_original, episode, bahamut_url, youtube_url, cover_image_val, tags_json = row
-        
-        anime_normalized = unicodedata.normalize('NFC', str(anime_original).strip())
-        temp_available_anime_names.add(anime_normalized)
-        
-        # ====== 修改這裡：處理集數的標準化 ======
-        ep_key_raw = episode
-        ep_key = ""
-        if ep_key_raw is not None:
-            try:
-                # 嘗試將浮點數轉換為整數，然後再轉為字串，確保為 "1" 而非 "1.0"
-                ep_key = str(int(float(ep_key_raw))).strip()
-            except (ValueError, TypeError):
-                # 如果轉換失敗 (例如本身就是字串或非數字)，則直接轉字串
-                ep_key = str(ep_key_raw).strip()
-        # =========================================
+                if not rows:
+                    logging.warning("⚠️ 警告：資料庫的 'anime_url' 表中沒有找到任何數據。") # 使用 logging 替代 print
+                    return
 
-        YOUTUBE_ANIME_EPISODE_URLS.setdefault(anime_normalized, {})
-        BAHAMUT_ANIME_EPISODE_URLS.setdefault(anime_normalized, {})
-        ANIME_TAGS_DB.setdefault(anime_normalized, [])
+                for row in rows:
+                    anime_original, episode, bahamut_url, youtube_url, cover_image_val, tags_json = row
 
-        if youtube_url:
-            yt_url_str = str(youtube_url).strip()
-            video_id = None
-            # 修改 YT 網址解析邏輯以適應您的數據格式
-            # 假設您的 YT 網址格式可能為 https://www.youtube.com/watch?v=VIDEO_ID 或其他
-            if "youtube.com/watch?v=" in yt_url_str:
-                video_id = yt_url_str.split("v=")[-1].split("&")[0]
-            elif "youtu.be/" in yt_url_str:
-                video_id = yt_url_str.split("youtu.be/")[-1].split("?")[0]
-            # 處理 Googleusercontent 代理的 URL
-            elif "youtube.com/watch?v=" in yt_url_str:
-                video_id = yt_url_str.split("v=")[-1].split("&")[0]
-            elif "youtu.be/" in yt_url_str:
-                video_id = yt_url_str.split("youtu.be/")[-1].split("?")[0]
+                    normalized_anime_name = unicodedata.normalize('NFC', str(anime_original).strip())
+                    unique_anime_names_normalized.add(normalized_anime_name)
 
-            if video_id:
-                YOUTUBE_ANIME_EPISODE_URLS[anime_normalized][ep_key] = video_id
-        
-        if bahamut_url: BAHAMUT_ANIME_EPISODE_URLS[anime_normalized][ep_key] = str(bahamut_url).strip()
-        if cover_image_val: ANIME_COVER_IMAGE_URLS[anime_normalized] = str(cover_image_val).strip()
-        if tags_json:
-            try:
-                tags = json.loads(str(tags_json).replace("'", '"'))
-                if isinstance(tags, list): ANIME_TAGS_DB[anime_normalized] = tags
-            except (json.JSONDecodeError, TypeError): pass
+                    ep_key = str(episode).strip()
 
-    AVAILABLE_ANIME_NAMES = sorted(list(temp_available_anime_names))
-    print(f"--- PostgreSQL 數據載入完成，耗時 {time.time() - start_time:.2f} 秒 ---")
+                    if normalized_anime_name not in YOUTUBE_ANIME_EPISODE_URLS:
+                        YOUTUBE_ANIME_EPISODE_URLS[normalized_anime_name] = {}
+                    if normalized_anime_name not in BAHAMUT_ANIME_EPISODE_URLS:
+                        BAHAMUT_ANIME_EPISODE_URLS[normalized_anime_name] = {}
+
+                    if youtube_url:
+                        yt_url_str = str(youtube_url).strip()
+                        video_id = None
+                        if "youtube.com/watch?v=" in yt_url_str:
+                            video_id = yt_url_str.split("v=")[-1].split("&")[0].split("?")[0]
+                        elif "youtu.be/" in yt_url_str:
+                            video_id = yt_url_str.split("youtu.be/")[-1].split("?")[0]
+                        
+                        if video_id:
+                            YOUTUBE_ANIME_EPISODE_URLS[normalized_anime_name][ep_key] = video_id
+
+                    if bahamut_url:
+                        BAHAMUT_ANIME_EPISODE_URLS[normalized_anime_name][ep_key] = str(bahamut_url).strip()
+
+                    if cover_image_val and normalized_anime_name not in ANIME_COVER_IMAGE_URLS:
+                        ANIME_COVER_IMAGE_URLS[normalized_anime_name] = str(cover_image_val).strip()
+
+                    if tags_json and normalized_anime_name not in ANIME_TAGS_DB:
+                        tags = []
+                        if isinstance(tags_json, str):
+                            try:
+                                tags = json.loads(tags_json.replace("'", '"'))
+                            except json.JSONDecodeError:
+                                tags = []
+                        elif isinstance(tags_json, list):
+                            tags = tags_json
+                        
+                        if isinstance(tags, list) and all(isinstance(t, str) for t in tags):
+                            ANIME_TAGS_DB[normalized_anime_name] = tags
+                    
+                AVAILABLE_ANIME_NAMES = sorted(list(unique_anime_names_normalized))
+                logging.info(f"INFO: 從資料庫加載完成。總計 {len(AVAILABLE_ANIME_NAMES)} 部動漫可供搜尋。") # 使用 logging 替代 print
+
+    except HTTPException as e:
+        logging.error(f"ERROR: 加載動漫數據映射失敗: {e.detail}") # 使用 logging 替代 print
+        sys.exit(1)
+    except Exception as e:
+        logging.error(f"ERROR: 加載動漫數據映射時發生未知錯誤: {e}") # 使用 logging 替代 print
+        traceback.print_exc()
+        sys.exit(1)
+    finally:
+        total_process_end_time = time.time()
+        logging.info(f"--- 資料庫數據載入完成，總耗時 {total_process_end_time - total_process_start_time:.4f} 秒 ---") # 使用 logging 替代 print
+
 
 @app.on_event("startup")
 async def startup_event():
-    print(f"伺服器啟動中...")
-    load_anime_data_from_db()
+    logging.info(f"伺服器啟動中，當前時間: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}") # 使用 logging 替代 print
+    load_anime_data_mapping_from_db()
 
-    global db, TAG_COMBINATION_MAPPING, EMOTION_CATEGORY_MAPPING
+    global db
     try:
-        firestore_credentials_json = os.getenv("FIRESTORE_CREDENTIALS_JSON")
-        if firestore_credentials_json:
-            credentials_info = json.loads(firestore_credentials_json)
-            # ====== 關鍵修改在這裡 ======
-            db = firestore.Client(database="anime-label", credentials=service_account.Credentials.from_service_account_info(credentials_info))
-            # ==========================
-            print("INFO: Firestore 客戶端初始化成功 (從環境變數)。")
+        # 嘗試從環境變數 GOOGLE_APPLICATION_CREDENTIALS_JSON 載入憑證
+        if os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON"):
+            credentials_json = json.loads(os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON"))
+            from google.oauth2 import service_account
+            credentials = service_account.Credentials.from_service_account_info(credentials_json)
+            db = firestore.Client(project=credentials.project_id, credentials=credentials, database="anime-label")
+        elif os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
+            # 如果是檔案路徑，確保 Dockerfile 有 COPY 進去
+            db = firestore.Client(database="anime-label")
         else:
-            print("ERROR: 未找到 FIRESTORE_CREDENTIALS_JSON 環境變數。請在部署環境中設定此變數。")
-            sys.exit(1)
+            # 如果沒有特定憑證，嘗試預設方式 (例如 GKE, Cloud Run 的服務帳號)
+            db = firestore.Client(database="anime-label")
+        
+        logging.info("INFO: Firestore 客戶端初始化成功。") # 使用 logging 替代 print
     except Exception as e:
-        print(f"ERROR: Firestore 客戶端初始化失敗: {e}"); traceback.print_exc(); sys.exit(1) # 添加 traceback 方便偵錯
+        logging.error(f"ERROR: Firestore 客戶端初始化失敗: {e}") # 使用 logging 替代 print
+        sys.exit(1)
 
-    print("\n--- 開始從 Firestore 載入情感映射檔案 ---")
-    start_time = time.time()
+    logging.info("\n--- 開始從 Firestore 載入情感映射檔案 ---") # 使用 logging 替代 print
+    start_mapping_load_time = time.time()
+
     try:
-        # 載入 anime_label collection
         anime_label_docs = db.collection('anime_label').stream()
         for doc in anime_label_docs:
             data = doc.to_dict()
-            if '作品分類' in data and '情感分類' in data and isinstance(data['情感分類'], list):
-                TAG_COMBINATION_MAPPING[data['作品分類']] = list(set(data['情感分類']))
-        
-        # 載入 emotion_label collection
+            tag_key = data.get('作品分類', doc.id)
+            categories = data.get('情感分類')
+            if tag_key and isinstance(categories, list):
+                TAG_COMBINATION_MAPPING[tag_key] = list(set(categories))
+        logging.info("INFO: TAG_COMBINATION_MAPPING 從 Firestore 'anime_label' 集合載入成功。") # 使用 logging 替代 print
+    except Exception as e:
+        logging.error(f"ERROR: 從 Firestore 'anime_label' 載入 TAG_COMBINATION_MAPPING 失敗: {e}") # 使用 logging 替代 print
+        sys.exit(1)
+
+    try:
         emotion_label_docs = db.collection('emotion_label').stream()
         for doc in emotion_label_docs:
             data = doc.to_dict()
-            if '情感分類' in data and '情緒' in data and isinstance(data['情緒'], list):
-                EMOTION_CATEGORY_MAPPING[data['情感分類']] = list(set(data['情緒']))
-        
-        print("INFO: 情感映射從 Firestore 載入成功。")
+            emotion_category_key = data.get('情感分類', doc.id)
+            emotions = data.get('情緒')
+            if emotion_category_key and isinstance(emotions, list):
+                EMOTION_CATEGORY_MAPPING[emotion_category_key] = list(set(emotions))
+        logging.info("INFO: EMOTION_CATEGORY_MAPPING 從 Firestore 'emotion_label' 集合載入成功。") # 使用 logging 替代 print
     except Exception as e:
-        print(f"ERROR: 從 Firestore 載入映射失敗: {e}"); traceback.print_exc(); sys.exit(1)
-    print(f"--- 情感映射載入完成，耗時 {time.time() - start_time:.2f} 秒 ---\n")
+        logging.error(f"ERROR: 從 Firestore 'emotion_label' 載入 EMOTION_CATEGORY_MAPPING 失敗: {e}") # 使用 logging 替代 print
+        sys.exit(1)
 
+    end_mapping_load_time = time.time()
+    logging.info(f"--- 情感映射檔案從 Firestore 載入完成，總耗時 {end_mapping_load_time - start_mapping_load_time:.4f} 秒 ---\n") # 使用 logging 替代 print
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return FileResponse("static/favicon.ico")
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
-    """主頁面，顯示動漫搜尋介面。"""
     return templates.TemplateResponse("animetop.html", {"request": request})
 
 @app.get("/search_anime_names")
-async def search_anime_names(query: str = Query(..., min_length=1)):
-    """提供動漫名稱的自動完成建議。"""
-    normalized_query = unicodedata.normalize('NFC', query.strip().lower())
-    suggestions = [
-        name for name in AVAILABLE_ANIME_NAMES
-        if normalized_query in unicodedata.normalize('NFC', name.lower())
-    ]
-    return {"suggestions": sorted(list(set(suggestions)))}
+async def search_anime_names(query: str = Query("", description="搜尋動漫名稱的關鍵字")):
+    if not query: return []
+    query_lower = query.lower()
+    return sorted([name for name in AVAILABLE_ANIME_NAMES if query_lower in name.lower()])
 
-@app.get("/anime_danmaku/{anime_name}/{episode_number_str}", response_model=dict)
-async def get_anime_danmaku(
-    anime_name: str,
-    episode_number_str: str, # 接收字串，以便處理 "2f" 這種情況
-    analysis_window: int = Query(60, description="彈幕分析的窗口大小（秒）"),
-    min_gap: int = Query(300, description="不同熱點之間的最小間隔（秒）"),
-    top_n: int = Query(5, description="每個情感類別要顯示的熱點數量"),
-    custom_mode: bool = Query(False, description="是否啟用自訂排序模式")
+# <<<<<<< 新增 API 端點 >>>>>>>
+@app.get("/get_emotion_categories")
+async def get_emotion_categories():
+    """
+    提供所有可用的頂層情感分類，供前端的自訂選項使用。
+    """
+    if not EMOTION_CATEGORY_MAPPING:
+        raise HTTPException(status_code=500, detail="情感分類映射未成功載入。")
+    return sorted(list(EMOTION_CATEGORY_MAPPING.keys()))
+
+
+@app.get("/get_emotions")
+async def get_emotions_api(
+    anime_name: str = Query(..., description="要查詢的動漫名稱"),
+    # <<<<<<< 關鍵修改：新增可選的 custom_emotions 參數 >>>>>>>
+    custom_emotions: list[str] = Query(None, description="使用者自訂的情感分類列表")
 ):
-    """
-    根據動漫名稱和集數，獲取情感分析熱點。
-    """
-    normalized_name = unicodedata.normalize('NFC', anime_name.strip())
+    request_start_time = time.time()
+    logging.info(f"\n--- 收到搜尋請求: '{anime_name}', 開始處理 ---") # 使用 logging 替代 print
+
+    if not anime_name:
+        raise HTTPException(status_code=400, detail="請提供動漫名稱")
+
+    normalized_anime_name = unicodedata.normalize('NFC', anime_name.strip())
     
-    # 針對集數進行標準化，確保查找時格式一致
-    ep_key = ""
-    if episode_number_str is not None:
-        try:
-            ep_key = str(int(float(episode_number_str))).strip()
-        except (ValueError, TypeError):
-            ep_key = episode_number_str.strip() # 如果無法轉為數字，則保留原始字串 (例如 "2f")
+    if normalized_anime_name not in AVAILABLE_ANIME_NAMES:
+        raise HTTPException(status_code=404, detail=f"抱歉，資料庫中沒有找到 '{anime_name}' 的數據。")
 
-    print(f"\n[GET /anime_danmaku/{normalized_name}/{ep_key}] 請求接收，參數: window={analysis_window}, gap={min_gap}, top_n={top_n}, custom_mode={custom_mode}")
-    
-    # 檢查動漫是否存在
-    if normalized_name not in AVAILABLE_ANIME_NAMES:
-        print(f"  [錯誤] 動漫 '{normalized_name}' 不存在於資料庫中。")
-        raise HTTPException(status_code=404, detail=f"動漫 '{anime_name}' 不存在。")
+    anime_episode_urls = YOUTUBE_ANIME_EPISODE_URLS.get(normalized_anime_name, {})
+    bahamut_episode_urls = BAHAMUT_ANIME_EPISODE_URLS.get(normalized_anime_name, {})
+    cover_image_url = ANIME_COVER_IMAGE_URLS.get(normalized_anime_name, "")
 
-    # 檢查集數是否存在於 URL 數據中 (用於提供 URL)
-    yt_url = YOUTUBE_ANIME_EPISODE_URLS.get(normalized_name, {}).get(ep_key)
-    bahamut_url = BAHAMUT_ANIME_EPISODE_URLS.get(normalized_name, {}).get(ep_key)
-
-    # 從資料庫獲取彈幕數據
-    danmaku_data = []
-    t_db_start = time.time()
+    # 從資料庫獲取彈幕
+    df_danmaku = pd.DataFrame()
     try:
         with get_db_connection() as conn, conn.cursor() as cur:
-            # 使用 parameterized query 防止 SQL 注入
             cur.execute(
-                sql.SQL('SELECT "彈幕", "label", "label2", "作品名", "集數", "時間", "情緒" FROM danmaku_data WHERE "作品名" = %s AND "集數" = %s;')
-                .format(table=sql.Identifier('danmaku_data')),
-                (anime_original, episode_number_str) # 這裡使用原始的 episode_number_str，因為 DB 裡可能存的是原始值
+                sql.SQL('SELECT "彈幕", "label", "label2", "作品名", "集數", "時間", "情緒" FROM anime_danmaku WHERE "作品名" = %s;'),
+                (normalized_anime_name,)
             )
             rows = cur.fetchall()
             if not rows:
-                print(f"  [警告] 動漫 '{normalized_name}' 第 {ep_key} 集沒有彈幕數據。")
-                # 即使沒有彈幕數據，也返回基礎信息
-                return {
-                    "anime_name": normalized_name,
-                    "episode": ep_key,
-                    "youtube_episode_urls": yt_url,
-                    "bahamut_episode_urls": bahamut_url,
-                    "cover_image_url": ANIME_COVER_IMAGE_URLS.get(normalized_name),
-                    "tags": ANIME_TAGS_DB.get(normalized_name, []),
-                    "emotional_hotspots": {},
-                    "message": "沒有找到該集數的彈幕數據。"
-                }
+                raise HTTPException(status_code=404, detail=f"抱歉，資料庫中沒有找到 '{normalized_anime_name}' 的彈幕數據。")
             
-            # 將查詢結果轉換為列表，然後創建 DataFrame
-            df_columns = ["彈幕", "label", "label2", "作品名", "集數", "時間", "情緒"]
-            danmaku_data = pd.DataFrame(rows, columns=df_columns)
-            
+            column_names = [desc[0] for desc in cur.description]
+            df_danmaku = pd.DataFrame(rows, columns=column_names)
+            # 確保 '集數' 是字串類型，以匹配 URL 字典的鍵
+            df_danmaku['集數'] = df_danmaku['集數'].astype(str)
+            logging.info(f"INFO: 從資料庫成功載入 {len(df_danmaku)} 筆 '{normalized_anime_name}' 的彈幕數據。") # 使用 logging 替代 print
+
+    except HTTPException as e:
+        raise e
     except Exception as e:
-        print(f"  [錯誤] 從資料庫獲取彈幕數據失敗: {e}")
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail="無法從資料庫獲取彈幕數據。")
-    t_db_end = time.time()
-    print(f"  [計時] 從資料庫獲取彈幕數據: {t_db_end - t_db_start:.4f} 秒")
-    
-    # 情感分析
-    result = {}
-    top_5_moments = []
-    
-    # 使用從 Firestore 載入的映射
-    emotion_mapping = TAG_COMBINATION_MAPPING.get(ANIME_TAGS_DB.get(normalized_name, ["未知分類"])[0], {})
-    final_emotion_mapping = {}
-    for tag_key, emotion_categories in emotion_mapping.items():
-        for category in emotion_categories:
+        logging.error(f"ERROR: 從資料庫讀取彈幕數據時發生錯誤: {str(e)}") # 使用 logging 替代 print
+        raise HTTPException(status_code=500, detail=f"從資料庫讀取彈幕數據時發生錯誤: {str(e)}")
+
+    # <<<<<<< 關鍵修改：根據 custom_emotions 動態生成 emotion_mapping >>>>>>>
+    dynamic_emotion_mapping = {}
+    if custom_emotions:
+        # --- 使用者自訂模式 ---
+        logging.info(f"INFO: 使用者自訂模式，選擇的情感分類: {custom_emotions}") # 使用 logging 替代 print
+        for category in custom_emotions:
             if category in EMOTION_CATEGORY_MAPPING:
-                final_emotion_mapping.setdefault(tag_key, []).extend(EMOTION_CATEGORY_MAPPING[category])
-
-    # 執行情感熱點分析
-    t_emotions_start = time.time()
-    try:
-        result = get_top3_emotions_fast(
-            df=danmaku_data,
-            anime_name=normalized_name,
-            emotion_mapping=final_emotion_mapping,
-            analysis_window=analysis_window,
-            min_gap=min_gap,
-            top_n=top_n
-        )
-    except Exception as e:
-        print(f"  [錯誤] 情感熱點分析失敗: {e}")
-        traceback.print_exc()
-        result = {} # 即使失敗也確保 result 是空的字典
-    t_emotions_end = time.time()
-    print(f"  [計時] 情感熱點分析: {t_emotions_end - t_emotions_start:.4f} 秒")
-
-    # 執行 TOP N 彈幕密度時段計算
-    t_top5_start = time.time()
-    try:
-        top_5_moments = get_top5_density_moments(
-            df=danmaku_data,
-            anime_name=normalized_name
-        )
-    except Exception as e:
-        print(f"  [錯誤] 彈幕密度時段計算失敗: {e}")
-        traceback.print_exc()
-        top_5_moments = [] # 即使失敗也確保 top_5_moments 是空的列表
-    t_top5_end = time.time()
-    print(f"  [計時] TOP 10 弹幕时段计算: {t_top5_end - t_top5_start:.4f} 秒")
-    
-    t_sort_start = time.time()
-    ordered_final_result = {}
-    if not custom_mode:
-        priority_top = ["最精采/激烈的時刻", "LIVE/配樂", "虐點/感動"]
-        priority_bottom_key = "彈幕最密集 TOP10"
-        
-        final_ordered_keys = []
-        for key in priority_top:
-            if key in result:
-                final_ordered_keys.append(key)
-        
-        other_categories = sorted([
-            key for key in result 
-            if key not in priority_top
-        ])
-        final_ordered_keys.extend(other_categories)
-        
-        if top_5_moments:
-            final_ordered_keys.append(priority_bottom_key)
-
-        for key in final_ordered_keys:
-            if key == priority_bottom_key:
-                ordered_final_result[key] = top_5_moments
-            elif key in result:
-                ordered_final_result[key] = result[key]
+                dynamic_emotion_mapping[category] = EMOTION_CATEGORY_MAPPING[category]
+        if not dynamic_emotion_mapping:
+            raise HTTPException(status_code=404, detail=f"您選擇的分類 {custom_emotions} 均無效。")
     else:
-        ordered_final_result = dict(sorted(result.items()))
-    t_sort_end = time.time()
-    print(f"  [計時] 最终结果排序: {t_sort_end - t_sort_start:.4f} 秒")
+        # --- 預設模式 (基於作品分類) ---
+        logging.info("INFO: 使用預設模式，根據作品分類生成情感映射。") # 使用 logging 替代 print
+        tags = ANIME_TAGS_DB.get(normalized_anime_name, [])
+        if not tags:
+            raise HTTPException(status_code=404, detail=f"找不到作品 '{anime_name}' 的作品分類數據。")
 
+        anime_tags_set = set(tags)
+        best_match_key = None
+        max_matched_tags_count = 0
+        
+        for mapping_key, categories_list in TAG_COMBINATION_MAPPING.items():
+            mapping_tags_set = set(mapping_key.split('|'))
+            common_tags = anime_tags_set.intersection(mapping_tags_set)
+            num_common_tags = len(common_tags)
+            
+            if num_common_tags > max_matched_tags_count:
+                max_matched_tags_count = num_common_tags
+                best_match_key = mapping_key
+                
+        if best_match_key and max_matched_tags_count > 0:
+            categories = TAG_COMBINATION_MAPPING.get(best_match_key, [])
+        else:
+            raise HTTPException(status_code=404, detail=f"找不到作品 '{anime_name}' (作品分類: {tags}) 對應的情感分類定義。")
+        
+        for category in categories:
+            if category in EMOTION_CATEGORY_MAPPING:
+                dynamic_emotion_mapping[category] = EMOTION_CATEGORY_MAPPING[category]
+        
+        if not dynamic_emotion_mapping:
+            raise HTTPException(status_code=404, detail=f"根據作品分類 '{tags}' 組合出的情感分類 ({categories}) 沒有對應的原始情緒詞。")
+
+    # 執行核心情緒分析
+    try:
+        result = get_top3_emotions_fast(df_danmaku, normalized_anime_name, emotion_mapping=dynamic_emotion_mapping)
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"伺服器內部錯誤，情緒分析失敗: {str(e)}")
+
+    if not result:
+        raise HTTPException(status_code=404, detail=f"抱歉，沒有找到 '{normalized_anime_name}' 的情緒熱點數據。")
+
+    # 結果處理和排序
+    processed_result = {}
+    for emotion_category, highlights_list in result.items():
+        if isinstance(highlights_list, list) and highlights_list:
+            processed_highlights = []
+            for item in highlights_list:
+                processed_item = {k: (int(v) if isinstance(v, np.integer) else v) for k, v in item.items()}
+                processed_highlights.append(processed_item)
+            processed_result[emotion_category] = processed_highlights
+
+    if not processed_result:
+        raise HTTPException(status_code=404, detail=f"抱歉，作品 '{normalized_anime_name}' 處理後沒有發現有效的亮點。")
+
+    # <<<<<<< 關鍵修改：根據模式決定排序方式 >>>>>>>
+    ordered_final_result = {}
+    if not custom_emotions:
+        # 預設模式：使用優先級排序
+        priority_categories = ["TOP 5 時刻", "最精采/激烈的時刻", "淚點"]
+        other_categories_with_counts = [(cat, len(highlights)) for cat, highlights in processed_result.items() if cat not in priority_categories]
+        top_other_categories = [cat for cat, _ in sorted(other_categories_with_counts, key=lambda x: x[1], reverse=True)[:5]]
+        
+        ordered_keys = []
+        for p_cat in priority_categories:
+            if p_cat in processed_result: ordered_keys.append(p_cat)
+        for t_cat in top_other_categories:
+            if t_cat not in ordered_keys: ordered_keys.append(t_cat)
+        
+        remaining_keys = sorted([k for k in processed_result if k not in ordered_keys])
+        ordered_keys.extend(remaining_keys)
+
+        for key in ordered_keys:
+            ordered_final_result[key] = processed_result[key]
+    else:
+        # 自訂模式：按字母順序排序
+        ordered_final_result = dict(sorted(processed_result.items()))
+
+    # 組合最終輸出
     final_output = {
-        "anime_name": normalized_name,
-        "episode": ep_key, # 返回標準化後的集數鍵
-        "youtube_episode_urls": yt_url,
-        "bahamut_episode_urls": bahamut_url,
-        "cover_image_url": ANIME_COVER_IMAGE_URLS.get(normalized_name),
-        "tags": ANIME_TAGS_DB.get(normalized_name, []),
-        "emotional_hotspots": ordered_final_result,
-        "message": "數據已成功載入並分析。"
+        "youtube_episode_urls": anime_episode_urls, 
+        "bahamut_episode_urls": bahamut_episode_urls, 
+        "cover_image_url": cover_image_url,
+        **ordered_final_result
     }
-    print(f"[GET /anime_danmaku/{normalized_name}/{ep_key}] 請求處理完成。")
+    
+    logging.info(f"--- 請求 '{anime_name}' 處理完成，總耗時: {time.time() - request_start_time:.4f} 秒 ---\n") # 使用 logging 替代 print
     return final_output
 
-if __name__ == "__main__":
-    # 在本地運行時，確保有默認值或者在 .env 檔案中設定環境變數
-    # 如果本地測試需要用到 Firestore，請確保 animetext-anime1si2sun.json 在根目錄，
-    # 或者手動設定 os.environ["FIRESTORE_CREDENTIALS_JSON"]
-    # For local development, you might want to load .env file
-    # from dotenv import load_dotenv
-    # load_dotenv()
-
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+# 在生產環境中，這個區塊不會被執行，因為 uvicorn 會直接執行 main:app
+# if __name__ == '__main__':
+#    logging.info("-----------------------------\n")
+#    uvicorn.run("main_json:app", host="0.0.0.0", port=5000, reload=True)
