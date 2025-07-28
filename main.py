@@ -55,11 +55,11 @@ templates = Jinja2Templates(directory=".")
 
 # ====== PostgreSQL 資料庫配置 ======
 # 建議從環境變數讀取資料庫憑證
-DB_HOST = os.getenv("DB_HOST", "35.223.124.201")
-DB_PORT = os.getenv("DB_PORT", "5432")
-DB_NAME = os.getenv("DB_NAME", "anime1si2sun")
-DB_USER = os.getenv("DB_USER", "postgres")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "lty890509")
+DB_HOST = os.getenv("DB_HOST", "")
+DB_PORT = os.getenv("DB_PORT", "")
+DB_NAME = os.getenv("DB_NAME", "")
+DB_USER = os.getenv("DB_USER", "")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "")
 
 DATABASE_URL = f"dbname={DB_NAME} user={DB_USER} password={DB_PASSWORD} host={DB_HOST} port={DB_PORT}"
 
@@ -196,7 +196,7 @@ async def startup_event():
     try:
         # 嘗試從環境變數 GOOGLE_APPLICATION_CREDENTIALS_JSON 載入憑證
         if os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON"):
-            credentials_json = json.loads(os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON"))
+            credentials_json = json.loads(os.getenv("FIRESTORE_CREDENTIALS_JSON"))
             from google.oauth2 import service_account
             credentials = service_account.Credentials.from_service_account_info(credentials_json)
             db = firestore.Client(project=credentials.project_id, credentials=credentials, database="anime-label")
