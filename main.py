@@ -97,94 +97,61 @@ db = None
 # 如果 'animetext-anime1si2sun.json' 在應用程式根目錄，並在 Dockerfile 中 COPY 進去，這樣寫可能可以。
 # 但更穩健的方案是使用 GOOGLE_APPLICATION_CREDENTIALS_JSON 環境變數 (下面會在 startup_event 處理)
 
-def load_anime_data_mapping_from_db():
-    """
-    啟動時從 PostgreSQL 的 anime_url 表加載所有 URL、封面圖資訊和作品分類。
-    """
+def load_anime_data_from_db():
+    print("\n--- 開始從 PostgreSQL 載入動漫數據 ---")
+    start_time = time.time()
     global AVAILABLE_ANIME_NAMES, YOUTUBE_ANIME_EPISODE_URLS, BAHAMUT_ANIME_EPISODE_URLS, ANIME_COVER_IMAGE_URLS, ANIME_TAGS_DB
     
-    total_process_start_time = time.time()
-    logging.info("INFO: 從資料庫加載動漫數據映射...") # 使用 logging 替代 print
+    # 彻底移除 "ED開始秒數" 的查询
+    query = 'SELECT "作品名", "集數", "巴哈動畫瘋網址", "YT網址", "封面圖", "作品分類" FROM anime_url ORDER BY "作品名", "集數";'
     
-    AVAILABLE_ANIME_NAMES.clear()
-    YOUTUBE_ANIME_EPISODE_URLS.clear()
-    BAHAMUT_ANIME_EPISODE_URLS.clear()
-    ANIME_COVER_IMAGE_URLS.clear()
-    ANIME_TAGS_DB.clear()
-    
-    unique_anime_names_normalized = set()
+    with get_db_connection() as conn, conn.cursor() as cur:
+        cur.execute(query)
+        rows = cur.fetchall()
 
-    try:
-        with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    sql.SQL("""
-                    SELECT "作品名", "集數", "巴哈動畫瘋網址", "YT網址", "封面圖", "作品分類"
-                    FROM anime_url ORDER BY "作品名", "集數";
-                    """)
-                )
-                rows = cur.fetchall()
+    if not rows:
+        print("⚠️ 警告：資料庫的 'anime_url' 表中沒有找到任何數據。")
+        return
 
-                if not rows:
-                    logging.warning("⚠️ 警告：資料庫的 'anime_url' 表中沒有找到任何數據。") # 使用 logging 替代 print
-                    return
+    for row in rows:
+        anime_original, episode, bahamut_url, youtube_url, cover_image_val, tags_json = row
+        
+        anime_normalized = unicodedata.normalize('NFC', str(anime_original).strip())
+        AVAILABLE_ANIME_NAMES.append(anime_normalized)
+        
+        # ====== 修改這裡 ======
+        ep_key_raw = episode
+        ep_key = ""
+        if ep_key_raw is not None:
+            try:
+                # 嘗試將其轉換為整數，然後再轉為字串
+                ep_key = str(int(float(ep_key_raw))).strip()
+            except (ValueError, TypeError):
+                # 如果轉換失敗，保留原始字串形式
+                ep_key = str(ep_key_raw).strip()
+        # ====================
 
-                for row in rows:
-                    anime_original, episode, bahamut_url, youtube_url, cover_image_val, tags_json = row
+        YOUTUBE_ANIME_EPISODE_URLS.setdefault(anime_normalized, {})
+        BAHAMUT_ANIME_EPISODE_URLS.setdefault(anime_normalized, {})
+        ANIME_TAGS_DB.setdefault(anime_normalized, [])
 
-                    normalized_anime_name = unicodedata.normalize('NFC', str(anime_original).strip())
-                    unique_anime_names_normalized.add(normalized_anime_name)
+        if youtube_url:
+            yt_url_str = str(youtube_url).strip()
+            video_id = None
+            if "youtube.com/watch?v=" in yt_url_str: video_id = yt_url_str.split("v=")[-1].split("&")[0]
+            elif "youtu.be/" in yt_url_str: video_id = yt_url_str.split("youtu.be/")[-1].split("?")[0]
+            if video_id: YOUTUBE_ANIME_EPISODE_URLS[anime_normalized][ep_key] = video_id
+        
+        if bahamut_url: BAHAMUT_ANIME_EPISODE_URLS[anime_normalized][ep_key] = str(bahamut_url).strip()
+        if cover_image_val: ANIME_COVER_IMAGE_URLS[anime_normalized] = str(cover_image_val).strip()
+        if tags_json:
+            try:
+                tags = json.loads(str(tags_json).replace("'", '"'))
+                if isinstance(tags, list): ANIME_TAGS_DB[anime_normalized] = tags
+            except (json.JSONDecodeError, TypeError): pass
 
-                    ep_key = str(episode).strip()
-
-                    if normalized_anime_name not in YOUTUBE_ANIME_EPISODE_URLS:
-                        YOUTUBE_ANIME_EPISODE_URLS[normalized_anime_name] = {}
-                    if normalized_anime_name not in BAHAMUT_ANIME_EPISODE_URLS:
-                        BAHAMUT_ANIME_EPISODE_URLS[normalized_anime_name] = {}
-
-                    if youtube_url:
-                        yt_url_str = str(youtube_url).strip()
-                        video_id = None
-                        if "youtube.com/watch?v=" in yt_url_str:
-                            video_id = yt_url_str.split("v=")[-1].split("&")[0].split("?")[0]
-                        elif "youtu.be/" in yt_url_str:
-                            video_id = yt_url_str.split("youtu.be/")[-1].split("?")[0]
-                        
-                        if video_id:
-                            YOUTUBE_ANIME_EPISODE_URLS[normalized_anime_name][ep_key] = video_id
-
-                    if bahamut_url:
-                        BAHAMUT_ANIME_EPISODE_URLS[normalized_anime_name][ep_key] = str(bahamut_url).strip()
-
-                    if cover_image_val and normalized_anime_name not in ANIME_COVER_IMAGE_URLS:
-                        ANIME_COVER_IMAGE_URLS[normalized_anime_name] = str(cover_image_val).strip()
-
-                    if tags_json and normalized_anime_name not in ANIME_TAGS_DB:
-                        tags = []
-                        if isinstance(tags_json, str):
-                            try:
-                                tags = json.loads(tags_json.replace("'", '"'))
-                            except json.JSONDecodeError:
-                                tags = []
-                        elif isinstance(tags_json, list):
-                            tags = tags_json
-                        
-                        if isinstance(tags, list) and all(isinstance(t, str) for t in tags):
-                            ANIME_TAGS_DB[normalized_anime_name] = tags
-                    
-                AVAILABLE_ANIME_NAMES = sorted(list(unique_anime_names_normalized))
-                logging.info(f"INFO: 從資料庫加載完成。總計 {len(AVAILABLE_ANIME_NAMES)} 部動漫可供搜尋。") # 使用 logging 替代 print
-
-    except HTTPException as e:
-        logging.error(f"ERROR: 加載動漫數據映射失敗: {e.detail}") # 使用 logging 替代 print
-        sys.exit(1)
-    except Exception as e:
-        logging.error(f"ERROR: 加載動漫數據映射時發生未知錯誤: {e}") # 使用 logging 替代 print
-        traceback.print_exc()
-        sys.exit(1)
-    finally:
-        total_process_end_time = time.time()
-        logging.info(f"--- 資料庫數據載入完成，總耗時 {total_process_end_time - total_process_start_time:.4f} 秒 ---") # 使用 logging 替代 print
+    AVAILABLE_ANIME_NAMES = sorted(list(set(AVAILABLE_ANIME_NAMES)))
+    print(f"--- PostgreSQL 數據載入完成，耗時 {time.time() - start_time:.2f} 秒 ---")
 
 
 @app.on_event("startup")
