@@ -264,22 +264,19 @@
 <body>
     <div class="container">
         <h1>動漫情緒熱點分析</h1>
-        <!-- <<<<<<< 修改：將輸入元件包裹在一個新容器中 >>>>>>> -->
         <div class="input-container">
             <div class="search-row">
                 <input type="text" id="animeNameInput" placeholder="請輸入動漫名稱，例如：膽大黨">
                 <ul id="suggestionsList" class="suggestions-list" style="display: none;"></ul>
                 <button onclick="getEmotionHighlights()">查詢情緒熱點</button>
             </div>
-            <!-- <<<<<<< 新增：自訂多選卷軸的 HTML 結構 >>>>>>> -->
             <div id="customSelect" class="custom-select-container">
                 <div class="select-box">
                     <span class="selected-display">選擇自訂項目</span>
                     <div class="arrow"></div>
                 </div>
                 <div id="optionsContainer" class="options-container">
-                    <!-- 選項將由 JavaScript 動態生成 -->
-                </div>
+                    </div>
             </div>
         </div>
 
@@ -319,16 +316,111 @@
         let currentSuggestionIndex = -1;
 
         // 彈出視窗函數 (不變)
-        function openModal(message, bahamutUrl) { /* ... */ }
-        function closeModal() { /* ... */ }
+        function openModal(message, bahamutUrl) { 
+            let fullMessage = message; 
+
+            if (bahamutUrl) {
+                bahamutLink.href = bahamutUrl;
+                bahamutLink.style.display = 'inline-block'; 
+                fullMessage += "<br>您可以嘗試前往巴哈姆特動畫瘋觀看。";
+            } else {
+                bahamutLink.style.display = 'none';
+                fullMessage += "<br>此集數暫無其他觀看連結。";
+            }
+            modalMessage.innerHTML = fullMessage;
+            modal.style.display = 'flex';
+        }
+        function closeModal() { 
+            modal.style.display = 'none';
+        }
         window.onclick = function(event) { if (event.target == modal) { closeModal(); } }
 
         // ====== 搜尋預測相關邏輯 (不變) ======
-        function debounce(func, delay) { /* ... */ }
-        animeNameInput.addEventListener('input', debounce(async (event) => { /* ... */ }, 300));
-        animeNameInput.addEventListener('keydown', (event) => { /* ... */ });
-        function highlightSuggestion(items) { /* ... */ }
-        function renderSuggestions(suggestions) { /* ... */ }
+        function debounce(func, delay) { 
+            return function(...args) {
+                clearTimeout(debounceTimer);
+                debounceTimer = setTimeout(() => func.apply(this, args), delay);
+            };
+        }
+        animeNameInput.addEventListener('input', debounce(async (event) => { 
+            const query = event.target.value.trim();
+            currentSuggestionIndex = -1;
+
+            if (query.length < 1) {
+                suggestionsList.style.display = 'none';
+                suggestionsList.innerHTML = '';
+                return;
+            }
+
+            try {
+                const response = await fetch(`/search_anime_names?query=${encodeURIComponent(query)}`);
+                if (!response.ok) {
+                    console.error('搜尋建議 API 錯誤:', await response.text());
+                    suggestionsList.style.display = 'none';
+                    return;
+                }
+                const suggestions = await response.json();
+                
+                renderSuggestions(suggestions);
+            } catch (error) {
+                console.error('獲取搜尋建議時發生錯誤:', error);
+                suggestionsList.style.display = 'none';
+            }
+        }, 300));
+        animeNameInput.addEventListener('keydown', (event) => { 
+            const items = Array.from(suggestionsList.children);
+            if (items.length === 0) return;
+
+            if (event.key === 'ArrowDown') {
+                event.preventDefault();
+                currentSuggestionIndex = (currentSuggestionIndex + 1) % items.length;
+                highlightSuggestion(items);
+            } else if (event.key === 'ArrowUp') {
+                event.preventDefault();
+                currentSuggestionIndex = (currentSuggestionIndex - 1 + items.length) % items.length;
+                highlightSuggestion(items);
+            } else if (event.key === 'Enter') {
+                event.preventDefault();
+                if (currentSuggestionIndex > -1 && items[currentSuggestionIndex]) {
+                    animeNameInput.value = items[currentSuggestionIndex].textContent;
+                    suggestionsList.style.display = 'none';
+                } else if (animeNameInput.value.trim() !== '') {
+                    getEmotionHighlights();
+                }
+            } else if (event.key === 'Escape') {
+                suggestionsList.style.display = 'none';
+            }
+        });
+        function highlightSuggestion(items) { 
+            items.forEach((item, index) => {
+                if (index === currentSuggestionIndex) {
+                    item.classList.add('active');
+                } else {
+                    item.classList.remove('active');
+                }
+            });
+            if (currentSuggestionIndex > -1) {
+                items[currentSuggestionIndex].scrollIntoView({ block: 'nearest' });
+            }
+        }
+        function renderSuggestions(suggestions) { 
+            suggestionsList.innerHTML = '';
+            if (suggestions.length === 0) {
+                suggestionsList.style.display = 'none';
+                return;
+            }
+
+            suggestions.forEach(name => {
+                const li = document.createElement('li');
+                li.textContent = name;
+                li.onclick = () => {
+                    animeNameInput.value = name;
+                    suggestionsList.style.display = 'none';
+                };
+                suggestionsList.appendChild(li);
+            });
+            suggestionsList.style.display = 'block';
+        }
 
 
         // ====== 新增：自訂選擇器相關邏輯 ======
@@ -552,6 +644,7 @@
 
                             if (youtubeEpisodeUrls && youtubeEpisodeUrls[item.集數]) {
                                 const youtubeVideoId = youtubeEpisodeUrls[item.集數];
+                                // 使用標準的 YouTube 嵌入/觀看連結格式
                                 targetUrl = `https://www.youtube.com/watch?v=${youtubeVideoId}&t=${item.start_second}s`;
                             }
 
@@ -578,117 +671,6 @@
                 errorMessageDiv.style.display = 'block';
                 console.error('Fetch error:', error);
             }
-        }
-        
-        // 恢復部分不變的函數體定義，以避免 'not defined' 錯誤
-        function openModal(message, bahamutUrl) {
-            let fullMessage = message; 
-
-            if (bahamutUrl) {
-                bahamutLink.href = bahamutUrl;
-                bahamutLink.style.display = 'inline-block'; 
-                fullMessage += "<br>您可以嘗試前往巴哈姆特動畫瘋觀看。";
-            } else {
-                bahamutLink.style.display = 'none';
-                fullMessage += "<br>此集數暫無其他觀看連結。";
-            }
-            modalMessage.innerHTML = fullMessage;
-            modal.style.display = 'flex';
-        }
-
-        function closeModal() {
-            modal.style.display = 'none';
-        }
-
-        function debounce(func, delay) {
-            return function(...args) {
-                clearTimeout(debounceTimer);
-                debounceTimer = setTimeout(() => func.apply(this, args), delay);
-            };
-        }
-
-        animeNameInput.addEventListener('input', debounce(async (event) => {
-            const query = event.target.value.trim();
-            currentSuggestionIndex = -1;
-
-            if (query.length < 1) {
-                suggestionsList.style.display = 'none';
-                suggestionsList.innerHTML = '';
-                return;
-            }
-
-            try {
-                const response = await fetch(`/search_anime_names?query=${encodeURIComponent(query)}`);
-                if (!response.ok) {
-                    console.error('搜尋建議 API 錯誤:', await response.text());
-                    suggestionsList.style.display = 'none';
-                    return;
-                }
-                const suggestions = await response.json();
-                
-                renderSuggestions(suggestions);
-            } catch (error) {
-                console.error('獲取搜尋建議時發生錯誤:', error);
-                suggestionsList.style.display = 'none';
-            }
-        }, 300));
-
-
-        animeNameInput.addEventListener('keydown', (event) => {
-            const items = Array.from(suggestionsList.children);
-            if (items.length === 0) return;
-
-            if (event.key === 'ArrowDown') {
-                event.preventDefault();
-                currentSuggestionIndex = (currentSuggestionIndex + 1) % items.length;
-                highlightSuggestion(items);
-            } else if (event.key === 'ArrowUp') {
-                event.preventDefault();
-                currentSuggestionIndex = (currentSuggestionIndex - 1 + items.length) % items.length;
-                highlightSuggestion(items);
-            } else if (event.key === 'Enter') {
-                event.preventDefault();
-                if (currentSuggestionIndex > -1 && items[currentSuggestionIndex]) {
-                    animeNameInput.value = items[currentSuggestionIndex].textContent;
-                    suggestionsList.style.display = 'none';
-                } else if (animeNameInput.value.trim() !== '') {
-                    getEmotionHighlights();
-                }
-            } else if (event.key === 'Escape') {
-                suggestionsList.style.display = 'none';
-            }
-        });
-
-        function highlightSuggestion(items) {
-            items.forEach((item, index) => {
-                if (index === currentSuggestionIndex) {
-                    item.classList.add('active');
-                } else {
-                    item.classList.remove('active');
-                }
-            });
-            if (currentSuggestionIndex > -1) {
-                items[currentSuggestionIndex].scrollIntoView({ block: 'nearest' });
-            }
-        }
-
-        function renderSuggestions(suggestions) {
-            suggestionsList.innerHTML = '';
-            if (suggestions.length === 0) {
-                suggestionsList.style.display = 'none';
-                return;
-            }
-
-            suggestions.forEach(name => {
-                const li = document.createElement('li');
-                li.textContent = name;
-                li.onclick = () => {
-                    animeNameInput.value = name;
-                    suggestionsList.style.display = 'none';
-                };
-                suggestionsList.appendChild(li);
-            });
-            suggestionsList.style.display = 'block';
         }
     </script>
 </body>
