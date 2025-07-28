@@ -51,7 +51,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-templates = Jinja2Templates(directory=".")
+templates = Jinja2Templates(directory="templates")
 
 # ====== PostgreSQL 資料庫配置 ======
 # 建議從環境變數讀取資料庫憑證
