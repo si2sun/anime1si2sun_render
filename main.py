@@ -14,22 +14,20 @@ import psycopg2
 from psycopg2 import sql
 from contextlib import contextmanager
 import io
+
+import google.auth
 from google.cloud import firestore
+from google.cloud.firestore_v1.base_client import BaseClient
+
+# 從同級目錄導入 情感top3提出_dandadan_fast 模組
 try:
     from 情感top3提出_dandadan_fast_json import get_top3_emotions_fast, get_top5_density_moments
 except ImportError:
     print("ERROR: 無法導入 '情感top3提出_dandadan_fast_json' 模組中的函式。")
     sys.exit(1)
-import google.auth
-from google.cloud import firestore
-from google.cloud.firestore_v1.base_client import BaseClient
-# credentials, project_id = google.auth.default()
-# db = firestore.Client(
-#     credentials=credentials,
-#     project='animetext',
-#     database="anime-label"  # <== 如果你確定有這個 database，就寫上它
-# )
+
 app = FastAPI()
+
 # ====== CORS 配置 ======
 # 生產環境允許所有來源，但限制特定方法和標頭
 app.add_middleware(
@@ -37,40 +35,48 @@ app.add_middleware(
     allow_origins=["*"],  # 生產環境可改為具體域名
     allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization"],
-    max_age=600
+    allow_headers=["*"],
 )
 
-# templates = Jinja2Templates(directory=".")
-templates = Jinja2Templates(directory="templates")
+templates = Jinja2Templates(directory=".")
 
 # ====== PostgreSQL 資料庫配置 ======
-import os
-DB_HOST = os.getenv("DB_HOST","")
-DB_PORT = os.getenv("DB_PORT","")
-DB_NAME = os.getenv("DB_NAME","")
-DB_USER = os.getenv("DB_USER","")
-DB_PASSWORD = os.getenv("DB_PASSWORD","")
-DATABASE_URL = f"dbname={DB_NAME} user={DB_USER} password={DB_PASSWORD} host={DB_HOST} port={DB_PORT}"
-db: BaseClient = None # 在 startup_event 中初始化
+DB_HOST = os.getenv("DB_HOST", "")
+DB_PORT = os.getenv("DB_PORT", "")
+DB_NAME = os.getenv("DB_NAME", "")
+DB_USER = os.getenv("DB_USER", "")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "")
+
 @contextmanager
 def get_db_connection():
+    """建立並管理 PostgreSQL 資料庫連接的上下文管理器。"""
     conn = None
     try:
-        conn = psycopg2.connect(DATABASE_URL)
+        conn = psycopg2.connect(
+            host=DB_HOST,
+            port=DB_PORT,
+            database=DB_NAME,
+            user=DB_USER,
+            password=DB_PASSWORD
+        )
         yield conn
-    except psycopg2.Error as e:
-        print(f"資料庫連線錯誤: {e}")
-        raise HTTPException(status_code=500, detail="資料庫連線錯誤")
     finally:
-        if conn: conn.close()
+        if conn:
+            conn.close()
 
-# 全域變數
-AVAILABLE_ANIME_NAMES, YOUTUBE_ANIME_EPISODE_URLS, BAHAMUT_ANIME_EPISODE_URLS, ANIME_COVER_IMAGE_URLS, ANIME_TAGS_DB = [], {}, {}, {}, {}
-TAG_COMBINATION_MAPPING, EMOTION_CATEGORY_MAPPING = {}, {}
+# 全域變數，用於儲存已載入的動漫數據和 URL
+AVAILABLE_ANIME_NAMES = []
+YOUTUBE_ANIME_EPISODE_URLS = {} # {動畫名: {集數: video_id}}
+BAHAMUT_ANIME_EPISODE_URLS = {} # {動畫名: {集數: url}}
+ANIME_COVER_IMAGE_URLS = {} # {動畫名: 封面圖URL}
+ANIME_TAGS_DB = {} # {動畫名: [tag1, tag2]}
 
+# Firestore 客戶端
+db: BaseClient = None # 在 startup_event 中初始化
 
-
+# 情感映射
+TAG_COMBINATION_MAPPING = {} # {作品分類: [情感分類1, 情感分類2]}
+EMOTION_CATEGORY_MAPPING = {} # {情感分類: [情緒1, 情緒2]}
 
 def load_anime_data_from_db():
     print("\n--- 開始從 PostgreSQL 載入動漫數據 ---")
