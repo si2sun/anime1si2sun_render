@@ -196,7 +196,7 @@ async def startup_event():
     try:
         # 嘗試從環境變數 GOOGLE_APPLICATION_CREDENTIALS_JSON 載入憑證
         if os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON"):
-            credentials_json = json.loads(os.getenv("FIRESTORE_CREDENTIALS_JSON"))
+            credentials_json = json.loads(os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON"))
             from google.oauth2 import service_account
             credentials = service_account.Credentials.from_service_account_info(credentials_json)
             db = firestore.Client(project=credentials.project_id, credentials=credentials, database="anime-label")
