@@ -40,7 +40,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-templates = Jinja2Templates(directory=".")
+templates = Jinja2Templates(directory="templates")
 
 # ====== PostgreSQL 資料庫配置 ======
 DB_HOST = os.getenv("DB_HOST", "")
