@@ -1,5 +1,3 @@
---- START OF FILE 情感top3提出_dandadan_fast_json.py ---
-
 import pandas as pd
 import numpy as np
 import io
@@ -335,6 +333,7 @@ if __name__ == "__main__":
 
     if not emotional_hotspots:
         logging.info("非常抱歉，根據目前的設定，找不到任何熱點。")
+
 
 
 
