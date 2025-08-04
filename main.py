@@ -377,7 +377,7 @@ async def get_emotions_api(
     ordered_final_result = {}
     if not custom_emotions:
         # 預設模式：使用優先級排序
-        priority_categories = ["精彩的戰鬥時段", "TOP 5 彈幕時段", "最精采/激烈的時刻", "淚點"]
+        priority_categories = ["精彩的戰鬥時段","LIVE/神配樂","虐點/感動","突如其來/震驚","虐點","爆笑","劇情高潮/震撼","最精采/激烈的時刻","TOP 10 彈幕時段"]
         
         other_categories_with_counts = [(cat, len(highlights)) for cat, highlights in processed_result.items() if cat not in priority_categories]
         top_other_categories = [cat for cat, _ in sorted(other_categories_with_counts, key=lambda x: x[1], reverse=True)[:5]]
@@ -412,6 +412,7 @@ async def get_emotions_api(
 # if __name__ == '__main__':
 #    logging.info("-----------------------------\n")
 #    uvicorn.run("main:app", host="0.0.0.0", port=5000, reload=True)
+
 
 
 
