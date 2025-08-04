@@ -162,11 +162,12 @@ def get_all_highlights_single_pass(
     postprocess_end_time = time.time()
     logging.info(f"--- 結果後處理完成，耗時 {postprocess_end_time - scan_end_time:.2f} 秒 ---")
     logging.info(f"--- 全部分析完成，總耗時 {time.time() - start_time:.2f} 秒 ---")
-    return final_result```
+    return final_result
 
 # 測試用區塊
 if __name__ == '__main__':
     pass
+
 
 
 
