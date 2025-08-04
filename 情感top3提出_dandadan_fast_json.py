@@ -1,5 +1,3 @@
---- START OF FILE 情感top3提出_dandadan_fast_json.py ---
-
 import pandas as pd
 import numpy as np
 import io
@@ -396,4 +394,5 @@ Star Burst Stream,3,99.0,進擊的巨人,22,0:05:21,負面/其他
 
     if not emotional_hotspots:
         logging.info("非常抱歉，根據目前的設定，找不到任何熱點。")
+
 
