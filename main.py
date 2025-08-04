@@ -341,7 +341,7 @@ async def get_emotions_api(
 
     ordered_final_result = {}
     if not custom_emotions:
-        priority_categories = ["精彩的戰鬥時段","LIVE/神配樂","虐點/感動","突如其來/震驚","虐點","爆笑","劇情高潮/震撼","最精采/激烈的時刻","TOP 10 彈幕時段"]
+        priority_categories = ["LIVE/神配樂","精彩的戰鬥時段","虐點/感動","突如其來/震驚","虐點","爆笑","劇情高潮/震撼","最精采/激烈的時刻","TOP 10 彈幕時段"]
         other_categories_with_counts = sorted([(cat, len(highlights)) for cat, highlights in processed_result.items() if cat not in priority_categories], key=lambda x: x[1], reverse=True)
         top_other_categories = [cat for cat, _ in other_categories_with_counts[:5]]
         ordered_keys = [p_cat for p_cat in priority_categories if p_cat in processed_result]
@@ -370,3 +370,4 @@ async def get_emotions_api(
 
     logging.info(f"--- 請求 '{anime_name}' 完整分析處理完成，總耗時: {time.time() - request_start_time:.4f} 秒 ---\n")
     return final_output
+
