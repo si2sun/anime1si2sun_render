@@ -1,5 +1,3 @@
---- START OF FILE main.py ---
-
 import pandas as pd
 import numpy as np
 from fastapi import FastAPI, HTTPException, Request, Query
@@ -408,6 +406,7 @@ async def get_emotions_api(
 # if __name__ == '__main__':
 #    logging.info("-----------------------------\n")
 #    uvicorn.run("main:app", host="0.0.0.0", port=5000, reload=True)
+
 
 
 
