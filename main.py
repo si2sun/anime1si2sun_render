@@ -23,8 +23,8 @@ from google.cloud import firestore
 
 # 從同級目錄導入 情感top3提出_dandadan_fast 模組
 try:
-    # <<<<<<<<<<<<<<< 步驟 1: 同時導入 get_top5_density_moments >>>>>>>>>>>>>>>
-    from 情感top3提出_dandadan_fast_json import get_top3_emotions_fast, get_top5_density_moments
+    # <<<<<<<<<<<<<<< 關鍵修改：只導入新的統一高效函式 >>>>>>>>>>>>>>>
+    from 情感top3提出_dandadan_fast_json import get_all_highlights_single_pass
 except ImportError:
     # 使用 logging 替代 print
     logging.error("ERROR: 無法導入 '情感top3提出_dandadan_fast_json' 模組。請確保該檔案存在且在可被Python找到的路徑上。")
@@ -257,7 +257,10 @@ async def search_anime_names(query: str = Query("", description="搜尋動漫名
 async def get_emotion_categories():
     if not EMOTION_CATEGORY_MAPPING:
         raise HTTPException(status_code=500, detail="情感分類映射未成功載入。")
-    return sorted(list(EMOTION_CATEGORY_MAPPING.keys()))
+    # 返回所有情感分類，再加上額外的特殊分類
+    all_categories = sorted(list(EMOTION_CATEGORY_MAPPING.keys()))
+    all_categories.extend(["精彩的戰鬥時段", "TOP 5 彈幕時段"])
+    return sorted(list(set(all_categories)))
 
 
 @app.get("/get_emotions")
@@ -310,8 +313,11 @@ async def get_emotions_api(
         for category in custom_emotions:
             if category in EMOTION_CATEGORY_MAPPING:
                 dynamic_emotion_mapping[category] = EMOTION_CATEGORY_MAPPING[category]
+        # 注意：即使自訂模式，我們仍需傳入一個 emotion_mapping，後端分析函式會處理
         if not dynamic_emotion_mapping:
-            raise HTTPException(status_code=404, detail=f"您選擇的分類 {custom_emotions} 均無效。")
+             # 如果使用者選的都是無效分類，給一個空字典，後端函式會處理
+             pass
+
     else:
         logging.info("INFO: 使用預設模式，根據作品分類生成情感映射。")
         tags = ANIME_TAGS_DB.get(normalized_anime_name, [])
@@ -338,15 +344,12 @@ async def get_emotions_api(
             raise HTTPException(status_code=404, detail=f"根據作品分類 '{tags}' 組合出的情感分類 ({categories}) 沒有對應的原始情緒詞。")
 
     try:
-        # 呼叫主分析函式
-        result = get_top3_emotions_fast(df_danmaku, normalized_anime_name, emotion_mapping=dynamic_emotion_mapping)
-        
-        # <<<<<<<<<<<<<<< 步驟 2: 額外呼叫彈幕密度分析函式 >>>>>>>>>>>>>>>
-        top_5_moments = get_top5_density_moments(df_danmaku, normalized_anime_name)
-        
-        # <<<<<<<<<<<<<<< 步驟 3: 將彈幕密度結果整合進來 >>>>>>>>>>>>>>>
-        if top_5_moments:
-            result["TOP 10 彈幕時段"] = top_5_moments
+        # <<<<<<<<<<<<<<< 關鍵修改：呼叫新的高效單一函式 >>>>>>>>>>>>>>>
+        result = get_all_highlights_single_pass(
+            df=df_danmaku, 
+            anime_name=normalized_anime_name, 
+            emotion_mapping=dynamic_emotion_mapping
+        )
             
     except Exception as e:
         traceback.print_exc()
@@ -359,6 +362,9 @@ async def get_emotions_api(
     processed_result = {}
     for emotion_category, highlights_list in result.items():
         if isinstance(highlights_list, list) and highlights_list:
+            # 在自訂模式下，只顯示使用者選擇的分類
+            if custom_emotions and emotion_category not in custom_emotions:
+                continue
             processed_highlights = []
             for item in highlights_list:
                 processed_item = {k: (int(v) if isinstance(v, np.integer) else v) for k, v in item.items()}
@@ -368,11 +374,10 @@ async def get_emotions_api(
     if not processed_result:
         raise HTTPException(status_code=404, detail=f"抱歉，作品 '{normalized_anime_name}' 處理後沒有發現有效的亮點。")
 
-    # 根據模式決定排序方式
     ordered_final_result = {}
     if not custom_emotions:
-        # <<<<<<<<<<<<<<< 步驟 4: 將 "TOP 5 彈幕時段" 加入優先排序 >>>>>>>>>>>>>>>
-        priority_categories = [ "精彩的戰鬥時段","LIVE/神配樂", "虐點/感動","突如其來/震驚","爆笑","TOP 10 彈幕時段"]
+        # 預設模式：使用優先級排序
+        priority_categories = ["精彩的戰鬥時段", "TOP 5 彈幕時段", "最精采/激烈的時刻", "淚點"]
         
         other_categories_with_counts = [(cat, len(highlights)) for cat, highlights in processed_result.items() if cat not in priority_categories]
         top_other_categories = [cat for cat, _ in sorted(other_categories_with_counts, key=lambda x: x[1], reverse=True)[:5]]
@@ -389,7 +394,7 @@ async def get_emotions_api(
         for key in ordered_keys:
             ordered_final_result[key] = processed_result[key]
     else:
-        # 自訂模式：按字母順序排序
+        # 自訂模式：按使用者選擇的順序（或字母順序）排序
         ordered_final_result = dict(sorted(processed_result.items()))
 
     # 組合最終輸出
@@ -403,6 +408,7 @@ async def get_emotions_api(
     logging.info(f"--- 請求 '{anime_name}' 處理完成，總耗時: {time.time() - request_start_time:.4f} 秒 ---\n")
     return final_output
 
+# 在生產環境中，這個區塊不會被執行
 # if __name__ == '__main__':
 #    logging.info("-----------------------------\n")
 #    uvicorn.run("main:app", host="0.0.0.0", port=5000, reload=True)
