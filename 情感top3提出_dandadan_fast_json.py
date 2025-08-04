@@ -1,3 +1,28 @@
+import pandas as pd
+import numpy as np
+import io
+import time
+import json
+import logging
+from collections import defaultdict
+
+# 配置日誌
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+def get_all_highlights_single_pass(
+    df: pd.DataFrame, 
+    anime_name: str, 
+    emotion_mapping: dict,
+    analysis_window: int = 60, 
+    min_gap: int = 240, 
+    top_n: int = 5
+):
+    """
+    【單次掃描優化版】 - V13
+    一次性處理所有情感分類、戰鬥時段和彈幕密度，大幅提升效能。
+    """
+    logging.info("\n--- 開始執行高效單次掃描分析 (V13) ---")
+    start_time = time.time()
 # --- 1. 數據預處理 ---
 df_anime = df[df['作品名'] == anime_name].copy()
 if df_anime.empty: return {}
@@ -139,6 +164,7 @@ for category, highlights in all_highlights.items():
 
 logging.info(f"--- 全部分析完成，總耗時 {time.time() - start_time:.2f} 秒 ---")
 return final_result
+
 
 
 
