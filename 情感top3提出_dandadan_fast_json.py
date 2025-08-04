@@ -112,10 +112,16 @@ def get_all_highlights_single_pass(
         highlights_df = pd.DataFrame(highlights).sort_values(by='score', ascending=False)
         
         selected_list = []
-        current_top_n = 10 if "劇情高潮" in category else 5
-        if "虐點/感動" in category: current_top_n = 7
-        if category == "精彩的戰鬥時段": current_top_n = 5
-        if category == "TOP 10 彈幕時段": current_top_n = 10 # 根據命名，這裡應該是10
+        if category == "TOP 10 彈幕時段":
+            current_top_n = 10
+        elif "劇情高潮/震撼" in category:
+            current_top_n = 10
+        elif "虐點/感動" in category:
+            current_top_n = 7
+        elif category == "精彩的戰鬥時段":
+            current_top_n = 7
+        else: # 其他所有情感分類的預設值
+            current_top_n = 5
       
         episode_quota_tracker = defaultdict(int)
     
@@ -164,6 +170,7 @@ def get_all_highlights_single_pass(
 if __name__ == '__main__':
     # 這裡可以放置您的測試數據和呼叫邏輯，以便獨立測試此檔案
     pass
+
 
 
 
