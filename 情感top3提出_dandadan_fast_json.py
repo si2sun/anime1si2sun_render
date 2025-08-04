@@ -243,7 +243,7 @@ if __name__ == "__main__":
     ANALYSIS_WINDOW_SECONDS = 60 
     
     logging.info("="*60) # 使用 logging 替代 print
-    logging.info(f"開始分析動畫: 《{ANIME_NAME_TO_ALYZE}》") # 使用 logging 替代 print
+    logging.info(f"開始分析動畫: 《{ANIME_NAME_TO_ANALYZE}》") # 使用 logging 替代 print
     logging.info("="*60) # 使用 logging 替代 print
     
     # 測試主函式
@@ -272,8 +272,9 @@ if __name__ == "__main__":
         logging.info(json.dumps(emotional_hotspots, indent=4, ensure_ascii=False)) # 使用 logging 替代 print
 
     if top_5_moments:
-        logging.info("\n--- TOP 5 彈幕時段 ---") # 使用 logging 替代 print
-        logging.info(json.dumps({"TOP 5 彈幕時段": top_5_moments}, indent=4, ensure_ascii=False)) # 使用 logging 替代 print
+        logging.info("\n--- TOP 10 彈幕時段 ---") # 使用 logging 替代 print
+        logging.info(json.dumps({"TOP 10 彈幕時段": top_5_moments}, indent=4, ensure_ascii=False)) # 使用 logging 替代 print
 
     if not emotional_hotspots and not top_5_moments:
+
         logging.info("非常抱歉，根據目前的設定，找不到任何熱點。") # 使用 logging 替代 print
