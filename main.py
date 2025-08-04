@@ -55,11 +55,11 @@ templates = Jinja2Templates(directory="templates")
 
 # ====== PostgreSQL 資料庫配置 ======
 # 建議從環境變數讀取資料庫憑證
-DB_HOST = os.getenv("DB_HOST", "35.223.124.201")
-DB_PORT = os.getenv("DB_PORT", "5432")
-DB_NAME = os.getenv("DB_NAME", "anime1si2sun")
-DB_USER = os.getenv("DB_USER", "postgres")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "lty890509")
+DB_HOST = os.getenv("DB_HOST", "")
+DB_PORT = os.getenv("DB_PORT", "")
+DB_NAME = os.getenv("DB_NAME", "")
+DB_USER = os.getenv("DB_USER", "")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "")
 
 DATABASE_URL = f"dbname={DB_NAME} user={DB_USER} password={DB_PASSWORD} host={DB_HOST} port={DB_PORT}"
 
@@ -334,29 +334,32 @@ async def get_emotions_api(
         if not dynamic_emotion_mapping:
             raise HTTPException(status_code=404, detail=f"您選擇的分類 {custom_emotions} 均無效。")
     else:
-        # --- 預設模式 (基於作品分類) ---
+        # --- 預設模式 (基於作品分類，合併所有匹配項) ---
         logging.info("INFO: 使用預設模式，根據作品分類生成情感映射。") # 使用 logging 替代 print
         tags = ANIME_TAGS_DB.get(normalized_anime_name, [])
         if not tags:
             raise HTTPException(status_code=404, detail=f"找不到作品 '{anime_name}' 的作品分類數據。")
 
         anime_tags_set = set(tags)
-        best_match_key = None
-        max_matched_tags_count = 0
-        
+        # 使用 set 來自動處理合併後重複的情感分類
+        collected_emotion_categories = set()
+
         for mapping_key, categories_list in TAG_COMBINATION_MAPPING.items():
+            # 將 "奇幻|冒險" 這樣的 key 轉換成 set
             mapping_tags_set = set(mapping_key.split('|'))
-            common_tags = anime_tags_set.intersection(mapping_tags_set)
-            num_common_tags = len(common_tags)
             
-            if num_common_tags > max_matched_tags_count:
-                max_matched_tags_count = num_common_tags
-                best_match_key = mapping_key
-                
-        if best_match_key and max_matched_tags_count > 0:
-            categories = TAG_COMBINATION_MAPPING.get(best_match_key, [])
-        else:
+            # 確保 mapping_key 不為空，並且是 anime_tags_set 的子集
+            if mapping_tags_set and mapping_tags_set.issubset(anime_tags_set):
+                # 如果匹配，就把這個 key 對應的所有情感分類都加到 set 中
+                logging.info(f"  -> 匹配到標籤組合 '{mapping_key}'，加入情感分類: {categories_list}")
+                collected_emotion_categories.update(categories_list)
+
+        if not collected_emotion_categories:
+            # 如果遍歷完所有組合後，一個匹配項都找不到
             raise HTTPException(status_code=404, detail=f"找不到作品 '{anime_name}' (作品分類: {tags}) 對應的情感分類定義。")
+
+        # 將集合轉換為列表，以便後續處理
+        categories = list(collected_emotion_categories)
         
         for category in categories:
             if category in EMOTION_CATEGORY_MAPPING:
