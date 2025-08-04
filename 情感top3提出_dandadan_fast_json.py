@@ -156,9 +156,9 @@ def get_top3_emotions_fast(
     start_time = time.time()
     
     BATTLE_KEYWORDS = [
-        "經費", "帥", "運鏡", "666", "作畫", "燃", "神", "分鏡", "高能", 
+        "經費", "帥", "運鏡", "666", "作畫", "燃", "太神了", "分鏡", "高能", 
         "外掛", "爆", "炸", "猛", "777", "速度", "流暢", "魄力", "優雅", 
-        "BGM", "打鬥"
+        "BGM", "打鬥" , "強"
     ]
 
     df_anime = df[df['作品名'] == anime_name].copy()
@@ -333,6 +333,7 @@ if __name__ == "__main__":
 
     if not emotional_hotspots:
         logging.info("非常抱歉，根據目前的設定，找不到任何熱點。")
+
 
 
 
