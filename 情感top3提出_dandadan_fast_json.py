@@ -3,164 +3,28 @@ import numpy as np
 import io
 import time
 import json
-import logging # 新增日誌模組
+import logging
+from collections import defaultdict, Counter
 
-# 配置日誌 (如果 main.py 沒有統一配置，這裡也可以配置)
-# logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# 配置日誌
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-def get_top5_density_moments(df: pd.DataFrame, anime_name: str, 
-                             analysis_window: int = 60, top_n: int = 10, 
-                             min_gap: int = 300):
-    """
-    計算整部動畫中，（剔除'簽到'後）彈幕密度最高的前 N 個時段。
-    分析范围为整部影片（0 秒到结尾）。
-    """
-    logging.info("\n--- 開始計算 TOP 5 彈幕密度榜 (完整扫描) ---") # 使用 logging 替代 print
-    
-    df_anime = df[df['作品名'] == anime_name].copy()
-    if '情緒' in df_anime.columns:
-        df_anime = df_anime[df_anime['情緒'] != '簽到']
-    if df_anime.empty: return []
-        
-    def time_to_seconds(t):
-        if pd.isna(t): return 0
-        try:
-            h, m, s = map(int, str(t).split(':'))
-            return h * 3600 + m * 60 + s
-        except: return 0
-    df_anime['秒數'] = df_anime['時間'].apply(time_to_seconds)
-
-    all_danmaku_seconds = {ep: group['秒數'].to_numpy(dtype=np.int32) for ep, group in df_anime.groupby('集數')}
-    episode_max_times = df_anime.groupby('集數')['秒數'].max().to_dict()
-    
-    all_highlights = []
-    
-    for ep, seconds_in_ep in all_danmaku_seconds.items():
-        max_time = episode_max_times.get(ep, 0)
-        if not max_time or max_time < analysis_window: continue
-        
-        for t_start in range(0, max_time - analysis_window + 1):
-            t_end = t_start + analysis_window
-            count = np.sum((seconds_in_ep >= t_start) & (seconds_in_ep < t_end))
-            
-            if count > 10:
-                all_highlights.append({'集數': ep, 'start_second': t_start, '彈幕數量': count})
-    
-    if not all_highlights: return []
-        
-    highlights_df = pd.DataFrame(all_highlights).sort_values(by='彈幕數量', ascending=False)
-    final_selected_list = []
-    
-    for _, row in highlights_df.iterrows():
-        if len(final_selected_list) >= top_n: break
-        is_conflict = any(r['集數'] == row['集數'] and abs(r['start_second'] - row['start_second']) < min_gap for r in final_selected_list)
-        if not is_conflict:
-            final_selected_list.append(row.to_dict())
-
-    def seconds_to_time_str(s): s = int(s); return f"{s//3600:02d}:{(s%3600)//60:02d}:{s%60:02d}"
-    def format_episode(ep):
-        try: num_ep = float(ep); return str(int(num_ep)) if num_ep == int(num_ep) else str(num_ep)
-        except (ValueError, TypeError): return str(ep)
-
-    output_list = [{'集數': format_episode(r['集數']), '時段': f"{seconds_to_time_str(r['start_second'])}~{seconds_to_time_str(r['start_second'] + analysis_window)}", '彈幕數量': int(r['彈幕數量']), 'start_second': int(r['start_second'])} for r in final_selected_list]
-    logging.info("--- TOP 5 彈幕密度榜計算完成 ---\n") # 使用 logging 替代 print
-    return output_list
-
-
-def get_exciting_battle_moments(df: pd.DataFrame, anime_name: str, 
-                                keywords: list, analysis_window: int = 60, 
-                                top_n: int = 5, min_gap: int = 300):
-    """
-    根據指定的關鍵字列表，計算戰鬥/作畫最精彩的時段。
-    """
-    logging.info("\n--- 開始計算『精彩的戰鬥時段』---")
-    
-    df_anime = df[df['作品名'] == anime_name].copy()
-    if df_anime.empty:
-        return []
-
-    # <<<<<<<<<<<<<<< 程式碼修正 >>>>>>>>>>>>>>>>
-    # 步驟 1: 先定義轉換函式
-    def time_to_seconds(t):
-        if pd.isna(t): return 0
-        try:
-            h, m, s = map(int, str(t).split(':'))
-            return h * 3600 + m * 60 + s
-        except: return 0
-    
-    # 步驟 2: 先對 df_anime 應用時間轉換，建立 '秒數' 欄位
-    df_anime['秒數'] = df_anime['時間'].apply(time_to_seconds)
-
-    # 步驟 3: 現在才從已經處理過的 df_anime 中過濾包含關鍵字的彈幕
-    keyword_regex = '|'.join(keywords)
-    df_battle = df_anime[df_anime['彈幕'].str.contains(keyword_regex, na=False)].copy()
-    # <<<<<<<<<<<<<<< 修正結束 >>>>>>>>>>>>>>>>
-
-    if df_battle.empty:
-        logging.info("--- 未找到與戰鬥/作畫相關的關鍵字彈幕，跳過計算 ---")
-        return []
-
-    # df_battle 自然就繼承了 '秒數' 欄位，不需再轉換
-    battle_seconds_by_ep = {ep: group['秒數'].to_numpy(dtype=np.int32) for ep, group in df_battle.groupby('集數')}
-    
-    # 現在這行程式碼可以正常運作了，因為 df_anime 已經有 '秒數' 欄位
-    episode_max_times = df_anime.groupby('集數')['秒數'].max().to_dict()
-
-    all_highlights = []
-    
-    # 滑動窗口分析
-    for ep, seconds_in_ep in battle_seconds_by_ep.items():
-        max_time = episode_max_times.get(ep, 0)
-        if not max_time or max_time < analysis_window: continue
-        
-        for t_start in range(0, max_time - analysis_window + 1):
-            t_end = t_start + analysis_window
-            count = np.sum((seconds_in_ep >= t_start) & (seconds_in_ep < t_end))
-            
-            if count > 5:
-                all_highlights.append({'集數': ep, 'start_second': t_start, '關鍵字彈幕數': count})
-    
-    if not all_highlights: return []
-        
-    highlights_df = pd.DataFrame(all_highlights).sort_values(by='關鍵字彈幕數', ascending=False)
-    final_selected_list = []
-    
-    for _, row in highlights_df.iterrows():
-        if len(final_selected_list) >= top_n: break
-        is_conflict = any(r['集數'] == row['集數'] and abs(r['start_second'] - row['start_second']) < min_gap for r in final_selected_list)
-        if not is_conflict:
-            final_selected_list.append(row.to_dict())
-
-    def seconds_to_time_str(s): s = int(s); return f"{s//3600:02d}:{(s%3600)//60:02d}:{s%60:02d}"
-    def format_episode(ep):
-        try: num_ep = float(ep); return str(int(num_ep)) if num_ep == int(num_ep) else str(num_ep)
-        except (ValueError, TypeError): return str(ep)
-
-    output_list = [{'集數': format_episode(r['集數']), '時段': f"{seconds_to_time_str(r['start_second'])}~{seconds_to_time_str(r['start_second'] + analysis_window)}", '彈幕數量': int(r['關鍵字彈幕數']), 'start_second': int(r['start_second'])} for r in final_selected_list]
-    logging.info("--- 『精彩的戰鬥時段』計算完成 ---\n")
-    return output_list
-
-
-def get_top3_emotions_fast(
+def get_all_highlights_single_pass(
     df: pd.DataFrame, 
     anime_name: str, 
-    emotion_mapping: dict, 
+    emotion_mapping: dict,
     analysis_window: int = 60, 
     min_gap: int = 240, 
     top_n: int = 5
 ):
     """
-    【滑動窗口 & 熱度分數版】 - V12 (整合戰鬥時段分析)
+    【最終效能優化版】 - V14
+    結合單次掃描架構與 NumPy 高速陣列運算，徹底解決效能瓶頸。
     """
-    logging.debug(f"DEBUG: 執行整合版分析函式 (V12)...")
+    logging.info("\n--- 開始執行最終版高效單次掃描分析 (V14) ---")
     start_time = time.time()
-    
-    BATTLE_KEYWORDS = [
-        "經費", "帥", "運鏡", "666", "作畫", "燃", "分鏡", "高能", 
-        "外掛", "爆", "炸", "猛", "777", "速度", "流暢", "魄力", "優雅", 
-        "BGM", "打鬥","強"
-    ]
 
+    # --- 1. 數據預處理 ---
     df_anime = df[df['作品名'] == anime_name].copy()
     if df_anime.empty: return {}
 
@@ -171,6 +35,14 @@ def get_top3_emotions_fast(
             return h * 3600 + m * 60 + s
         except: return 0
     df_anime['秒數'] = df_anime['時間'].apply(time_to_seconds)
+    
+    BATTLE_KEYWORDS = [
+        "經費", "帥", "運鏡", "666", "作畫", "燃", "分鏡", "高能", 
+        "外掛", "爆", "炸", "猛", "777", "速度", "流暢", "魄力", "優雅", 
+        "BGM", "打鬥", "強"
+    ]
+    keyword_regex = '|'.join(BATTLE_KEYWORDS)
+    df_anime['is_battle'] = df_anime['彈幕'].str.contains(keyword_regex, na=False)
 
     def classify_emotion(e):
         for cat, e_list in emotion_mapping.items():
@@ -178,172 +50,124 @@ def get_top3_emotions_fast(
         return None
     df_anime['情緒分類'] = df_anime['情緒'].apply(classify_emotion)
     
-    df_classified = df_anime.dropna(subset=['情緒分類', '秒數']).sort_values('秒數')
-    if df_classified.empty:
-        logging.warning(f"警告: 作品 '{anime_name}' 沒有可供分析的情緒標籤數據。")
-    
-    all_danmaku_seconds = {ep: group['秒數'].to_numpy(dtype=np.int32) for ep, group in df_anime.groupby('集數')}
-    
-    output_result = {}
+    all_highlights = defaultdict(list)
     episode_max_times = df_anime.groupby('集數')['秒數'].max().to_dict()
 
-    for emotion_category, emotion_list in emotion_mapping.items():
-        logging.info(f"  -> 開始分析情緒分類: 【{emotion_category}】")
+    # --- 2. 單次滑動窗口掃描 (NumPy 高效版) ---
+    for ep, group_df in df_anime.groupby('集數'):
+        max_time = episode_max_times.get(ep, 0)
+        if not max_time or max_time < analysis_window: continue
         
-        group_df = df_classified[df_classified['情緒分類'] == emotion_category]
-        emotion_seconds_by_ep = {ep: g['秒數'].to_numpy(dtype=np.int32) for ep, g in group_df.groupby('集數')}
+        logging.info(f"  -> 正在掃描第 {ep} 集...")
         
-        all_potential_highlights = []
+        # 預先將每集的數據轉換為 NumPy 陣列，這是加速的關鍵
+        ep_seconds = group_df['秒數'].to_numpy(dtype=np.int32)
+        ep_emotions = group_df['情緒分類'].to_numpy()
+        ep_is_battle = group_df['is_battle'].to_numpy()
+        ep_is_signin = (group_df['情緒'].to_numpy() == '簽到')
         
-        for ep, emotion_seconds in emotion_seconds_by_ep.items():
-            max_time_to_use = episode_max_times.get(ep, 0)
-            if not max_time_to_use or max_time_to_use < analysis_window: continue
+        # 對每一秒進行滑動窗口計算
+        for t_start in range(0, max_time - analysis_window + 1):
+            t_end = t_start + analysis_window
             
-            total_seconds_in_ep = all_danmaku_seconds.get(ep, np.array([]))
+            # 創建布林遮罩 (mask)，這是 NumPy 最快的操作之一
+            mask = (ep_seconds >= t_start) & (ep_seconds < t_end)
+            total_count = np.sum(mask)
+            
+            if total_count < 10:
+                continue
 
-            for t_start in range(0, max_time_to_use - analysis_window + 1):
-                t_end = t_start + analysis_window
-                
-                MIN_TOTAL_COMMENTS = 20
-                total_count = np.sum((total_seconds_in_ep >= t_start) & (total_seconds_in_ep < t_end))
-                if total_count < MIN_TOTAL_COMMENTS: continue
+            # a) 計算情感分類熱度
+            window_emotions = ep_emotions[mask]
+            emotion_counts = Counter(cat for cat in window_emotions if pd.notna(cat))
 
-                count = np.sum((emotion_seconds >= t_start) & (emotion_seconds < t_end))
-                
+            for emotion_category, count in emotion_counts.items():
                 min_count_threshold = 7 if "虐點/感動" in emotion_category or "劇情高潮" in emotion_category else 5
                 if count < min_count_threshold: continue
 
                 rate = count / total_count
-                
-                if emotion_category == "LIVE/神配樂":
-                    MIN_RATE_THRESHOLD = 0.3
-                    if rate < MIN_RATE_THRESHOLD:
-                        continue
-                
+                if emotion_category == "LIVE/神配樂" and rate < 0.3:
+                    continue
                 score = count * rate
-                
-                all_potential_highlights.append({
-                    '集數': ep, 'start_second': t_start, 'score': score, 
-                    'count': count, 'rate': rate
-                })
-
-        if not all_potential_highlights: continue
-        
-        highlights_df = pd.DataFrame(all_potential_highlights).sort_values(by='score', ascending=False)
-        final_selected_list = []
-        episode_quota_tracker = {}
-        MAX_PER_EPISODE = 2
-        
-        if "虐點/感動" in emotion_category: current_top_n = 7
-        elif "劇情高潮/震撼" in emotion_category: current_top_n = 10
-        elif "LIVE/神配樂" in emotion_category: current_top_n = 7
-        else: current_top_n = top_n
-        
-        for _, row in highlights_df.iterrows():
-            if len(final_selected_list) >= current_top_n: break
+                all_highlights[emotion_category].append({'集數': ep, 'start_second': t_start, 'score': score, 'count': count, 'rate': rate})
             
-            ep = row['集數']
-            
-            if episode_quota_tracker.get(ep, 0) >= MAX_PER_EPISODE:
-                continue
+            # b) 計算精彩戰鬥時段
+            battle_count = np.sum(ep_is_battle[mask])
+            if battle_count > 5:
+                 all_highlights["精彩的戰鬥時段"].append({'集數': ep, 'start_second': t_start, 'score': battle_count})
 
-            is_conflict = any(r['集數'] == ep and abs(r['start_second'] - row['start_second']) < min_gap for r in final_selected_list)
-            if is_conflict:
-                continue
+            # c) 計算 TOP 彈幕密度
+            density_count = total_count - np.sum(ep_is_signin[mask])
+            if density_count > 10:
+                all_highlights["TOP 10 彈幕時段"].append({'集數': ep, 'start_second': t_start, 'score': density_count})
 
-            final_selected_list.append(row.to_dict())
-            episode_quota_tracker[ep] = episode_quota_tracker.get(ep, 0) + 1
-
-        if final_selected_list:
-            REFINED_WINDOW = 30
-            refined_list = []
-            for window_60s in final_selected_list:
-                ep = window_60s['集數']
-                seconds_to_refine = emotion_seconds_by_ep.get(ep, np.array([]))
-                
-                best_30s_start, max_count_in_30s = window_60s['start_second'], -1
-                for t_start_30s in range(window_60s['start_second'], window_60s['start_second'] + analysis_window - REFINED_WINDOW + 1):
-                    t_end_30s = t_start_30s + REFINED_WINDOW
-                    count_in_30s = np.sum((seconds_to_refine >= t_start_30s) & (seconds_to_refine < t_end_30s))
-                    if count_in_30s > max_count_in_30s:
-                        max_count_in_30s = count_in_30s
-                        best_30s_start = t_start_30s
-                
-                window_60s['start_second'] = best_30s_start
-                refined_list.append(window_60s)
-            
-            refined_list.sort(key=lambda x: x['score'], reverse=True)
-            
-            def seconds_to_time_str(s): s = int(s); return f"{s//3600:02d}:{(s%3600)//60:02d}:{s%60:02d}"
-            def format_episode(ep):
-                try: num_ep = float(ep); return str(int(num_ep)) if num_ep == int(num_ep) else str(num_ep)
-                except (ValueError, TypeError): return str(ep)
-                
-            output_list = [{'集數': format_episode(r['集數']), '時段': f"{seconds_to_time_str(r['start_second'])}~{seconds_to_time_str(r['start_second'] + REFINED_WINDOW)}", '熱度分數': round(r['score'], 2), '彈幕數量': int(r['count']), '情緒佔比': f"{r['rate']:.1%}", 'start_second': int(r['start_second'])} for r in refined_list]
-            output_result[emotion_category] = output_list
+    scan_end_time = time.time()
+    logging.info(f"--- 全集掃描完成，耗時 {scan_end_time - start_time:.2f} 秒 ---")
     
-    # 呼叫新的戰鬥時段分析函式
-    battle_moments = get_exciting_battle_moments(df, anime_name, keywords=BATTLE_KEYWORDS)
-    if battle_moments:
-        output_result["精彩的戰鬥時段"] = battle_moments
-
-    logging.debug(f"\nDEBUG: 全部分析完成，總耗時 {time.time() - start_time:.2f} 秒。")
-    return output_result
+    # --- 3. 結果後處理 ---
+    final_result = {}
+    for category, highlights in all_highlights.items():
+        if not highlights: continue
+        
+        highlights_df = pd.DataFrame(highlights).sort_values(by='score', ascending=False)
+        
+        selected_list = []
+        if category == "TOP 10 彈幕時段":
+            current_top_n = 10
+        elif "劇情高潮/震撼" in category:
+            current_top_n = 10
+        elif "虐點/感動" in category:
+            current_top_n = 7
+        elif category == "精彩的戰鬥時段":
+            current_top_n = 7
+        else: # 其他所有情感分類的預設值
+            current_top_n = 5
+      
+        episode_quota_tracker = defaultdict(int)
+    
+        for _, row in highlights_df.iterrows():
+            if len(selected_list) >= current_top_n: break
+            
+            ep_row = row['集數']
+            if episode_quota_tracker[ep_row] >= 2 and category not in ["精彩的戰鬥時段", "TOP 10 彈幕時段"]:
+                continue
+    
+            is_conflict = any(r['集數'] == ep_row and abs(r['start_second'] - row['start_second']) < min_gap for r in selected_list)
+            if not is_conflict:
+                selected_list.append(row.to_dict())
+                episode_quota_tracker[ep_row] += 1
+    
+        if not selected_list: continue
+    
+        def seconds_to_time_str(s): s = int(s); return f"{s//3600:02d}:{(s%3600)//60:02d}:{s%60:02d}"
+        def format_episode(ep):
+            try: num_ep = float(ep); return str(int(num_ep)) if num_ep == int(num_ep) else str(num_ep)
+            except (ValueError, TypeError): return str(ep)
+    
+        output_list = []
+        final_window = 30 if category not in ["精彩的戰鬥時段", "TOP 10 彈幕時段"] else analysis_window
+        
+        for r in selected_list:
+            item = {
+                '集數': format_episode(r['集數']),
+                '時段': f"{seconds_to_time_str(r['start_second'])}~{seconds_to_time_str(r['start_second'] + final_window)}",
+                'start_second': int(r['start_second'])
+            }
+            if 'rate' in r:
+                item['熱度分數'] = round(r['score'], 2)
+                item['彈幕數量'] = int(r['count'])
+                item['情緒佔比'] = f"{r['rate']:.1%}"
+            else:
+                item['彈幕數量'] = int(r['score'])
+            output_list.append(item)
+            
+        final_result[category] = output_list
+    
+    logging.info(f"--- 全部分析完成，總耗時 {time.time() - start_time:.2f} 秒 ---")
+    return final_result
 
 # 測試用區塊
-if __name__ == "__main__":
-    csv_data="""彈幕,label,label2,作品名,集數,時間,情緒
-    """ 
-    # 此處省略測試數據以保持簡潔
-    
-    df = pd.read_csv(io.StringIO(csv_data))
-    
-    # ... 測試程式碼 ...
-    
-    emotion_mapping={
-        "LIVE/神配樂": [
-            "日語歌詞/外語梗句", "誓言", "感動","稱讚","正面/其他",'強烈稱讚'
-        ],
-        "劇情高潮/震撼": [
-            "劇情高潮", "震撼", "伏筆"
-        ]
-    }
-    
-    ANIME_NAME_TO_ANALYZE = "佐賀偶像是傳奇 捲土重來"
-    ANALYSIS_WINDOW_SECONDS = 60 
-    
-    logging.info("="*60) # 使用 logging 替代 print
-    logging.info(f"開始分析動畫: 《{ANIME_NAME_TO_ANALYZE}》") # 使用 logging 替代 print
-    logging.info("="*60) # 使用 logging 替代 print
-    
-    # 測試主函式
-    emotional_hotspots = get_top3_emotions_fast(
-        df=df,
-        anime_name=ANIME_NAME_TO_ANALYZE,
-        emotion_mapping=emotion_mapping,
-        analysis_window=ANALYSIS_WINDOW_SECONDS,
-        min_gap=300,
-        top_n=5
-    )
-    
-    # 測試 TOP 5 密度榜函式
-    top_5_moments = get_top5_density_moments(
-        df=df,
-        anime_name=ANIME_NAME_TO_ANALYZE,
-        min_gap=300
-    )
+if __name__ == '__main__':
+    # 這裡可以放置您的測試數據和呼叫邏輯，以便獨立測試此檔案
+    pass
 
-    logging.info("\n" + "="*60) # 使用 logging 替代 print
-    logging.info("      分析完成！最終情感熱點報告如下：") # 使用 logging 替代 print
-    logging.info("="*60 + "\n") # 使用 logging 替代 print
-    
-    if emotional_hotspots:
-        logging.info("--- 情感分類熱點 ---") # 使用 logging 替代 print
-        logging.info(json.dumps(emotional_hotspots, indent=4, ensure_ascii=False)) # 使用 logging 替代 print
-
-    if top_5_moments:
-        logging.info("\n--- TOP 5 彈幕時段 ---") # 使用 logging 替代 print
-        logging.info(json.dumps({"TOP 10 彈幕時段": top_5_moments}, indent=4, ensure_ascii=False)) # 使用 logging 替代 print
-
-    if not emotional_hotspots and not top_5_moments:
-        logging.info("非常抱歉，根據目前的設定，找不到任何熱點。") # 使用 logging 替代 print
