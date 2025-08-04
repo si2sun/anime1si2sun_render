@@ -18,39 +18,42 @@ def get_all_highlights_single_pass(
     top_n: int = 5
 ):
     """
-    【最終效能優化版】 - V15
-    對數據預處理進行全面向量化，取代 apply()，大幅提升效能。
+    【最終效能優化版】 - V14.1
+    結合單次掃描架構與 NumPy 高速陣列運算，並修正了 TOP 10 顯示數量。
+    這是經過實證，當前效能最佳的版本。
     """
-    logging.info("\n--- 開始執行最終版高效單次掃描分析 (V15) ---")
+    logging.info("\n--- 開始執行最終版高效單次掃描分析 (V14.1) ---")
     start_time = time.time()
 
-    # --- 1. 數據預處理 (全面向量化) ---
+    # --- 1. 數據預處理 ---
     df_anime = df[df['作品名'] == anime_name].copy()
     if df_anime.empty: return {}
 
-    # <<<<<<<<<<<<<<< 效能優化點 1: 向量化時間轉換 >>>>>>>>>>>>>>>
-    time_parts = df_anime['時間'].str.split(':', expand=True).astype(int)
-    df_anime['秒數'] = time_parts[0] * 3600 + time_parts[1] * 60 + time_parts[2]
+    def time_to_seconds(t):
+        if pd.isna(t): return 0
+        try:
+            h, m, s = map(int, str(t).split(':'))
+            return h * 3600 + m * 60 + s
+        except: return 0
+    df_anime['秒數'] = df_anime['時間'].apply(time_to_seconds)
     
     BATTLE_KEYWORDS = [
-        "經費", "帥", "運鏡", "666", "作畫", "燃", "神", "分鏡", "高能", 
+        "經費", "帥", "運鏡", "666", "作畫", "燃", "分鏡", "高能", 
         "外掛", "爆", "炸", "猛", "777", "速度", "流暢", "魄力", "優雅", 
         "BGM", "打鬥", "強"
     ]
     keyword_regex = '|'.join(BATTLE_KEYWORDS)
     df_anime['is_battle'] = df_anime['彈幕'].str.contains(keyword_regex, na=False)
 
-    # <<<<<<<<<<<<<<< 效能優化點 2: 向量化情緒分類 >>>>>>>>>>>>>>>
-    # 創建一個從 '情緒' -> '情感分類' 的反向映射字典
-    emotion_to_category_map = {emotion: category 
-                               for category, emotions in emotion_mapping.items() 
-                               for emotion in emotions}
-    # 使用高效的 .map() 方法進行分類
-    df_anime['情緒分類'] = df_anime['情緒'].map(emotion_to_category_map)
+    def classify_emotion(e):
+        for cat, e_list in emotion_mapping.items():
+            if e in e_list: return cat
+        return None
+    df_anime['情緒分類'] = df_anime['情緒'].apply(classify_emotion)
     
     all_highlights = defaultdict(list)
     episode_max_times = df_anime.groupby('集數')['秒數'].max().to_dict()
-
+    
     preprocess_end_time = time.time()
     logging.info(f"--- 數據預處理完成，耗時 {preprocess_end_time - start_time:.2f} 秒 ---")
 
@@ -104,6 +107,7 @@ def get_all_highlights_single_pass(
         highlights_df = pd.DataFrame(highlights).sort_values(by='score', ascending=False)
         
         selected_list = []
+        
         if category == "TOP 10 彈幕時段":
             current_top_n = 10
         elif "劇情高潮" in category:
@@ -155,12 +159,15 @@ def get_all_highlights_single_pass(
             
         final_result[category] = output_list
     
+    postprocess_end_time = time.time()
+    logging.info(f"--- 結果後處理完成，耗時 {postprocess_end_time - scan_end_time:.2f} 秒 ---")
     logging.info(f"--- 全部分析完成，總耗時 {time.time() - start_time:.2f} 秒 ---")
-    return final_result
+    return final_result```
 
 # 測試用區塊
 if __name__ == '__main__':
     pass
+
 
 
 
