@@ -6,25 +6,26 @@ import json
 import logging
 from collections import defaultdict, Counter
 
-# 配置日誌
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def get_all_highlights_single_pass(
     df: pd.DataFrame, 
     anime_name: str, 
     emotion_mapping: dict,
+    # <<< 關鍵修改 1：新增參數，預設為 False >>>
+    calculate_battle_segments: bool = False,
     analysis_window: int = 60, 
     min_gap: int = 240, 
     top_n: int = 5
 ):
     """
     【最終效能優化版】 - V14
-    結合單次掃描架構與 NumPy 高速陣列運算，徹底解決效能瓶頸。
+    結合單次掃描架構與 NumPy 高速陣列運算，並支援可選的戰鬥時段分析。
     """
     logging.info("\n--- 開始執行最終版高效單次掃描分析 (V14) ---")
     start_time = time.time()
 
-    # --- 1. 數據預處理 ---
+    # --- 1. 數據預處理 (不變) ---
     df_anime = df[df['作品名'] == anime_name].copy()
     if df_anime.empty: return {}
 
@@ -36,13 +37,15 @@ def get_all_highlights_single_pass(
         except: return 0
     df_anime['秒數'] = df_anime['時間'].apply(time_to_seconds)
     
-    BATTLE_KEYWORDS = [
-        "經費", "帥", "運鏡", "666", "作畫", "燃", "分鏡", "高能", 
-        "外掛", "爆", "炸", "猛", "777", "速度", "流暢", "魄力", "優雅", 
-        "BGM", "打鬥", "強"
-    ]
-    keyword_regex = '|'.join(BATTLE_KEYWORDS)
-    df_anime['is_battle'] = df_anime['彈幕'].str.contains(keyword_regex, na=False)
+    # 僅在需要時才建立 is_battle 欄位，節省資源
+    if calculate_battle_segments:
+        BATTLE_KEYWORDS = [
+            "經費", "帥", "運鏡", "666", "作畫", "燃", "分鏡", "高能", 
+            "外掛", "爆", "炸", "猛", "777", "速度", "流暢", "魄力", "優雅", 
+            "BGM", "打鬥", "強"
+        ]
+        keyword_regex = '|'.join(BATTLE_KEYWORDS)
+        df_anime['is_battle'] = df_anime['彈幕'].str.contains(keyword_regex, na=False)
 
     def classify_emotion(e):
         for cat, e_list in emotion_mapping.items():
@@ -60,43 +63,39 @@ def get_all_highlights_single_pass(
         
         logging.info(f"  -> 正在掃描第 {ep} 集...")
         
-        # 預先將每集的數據轉換為 NumPy 陣列，這是加速的關鍵
         ep_seconds = group_df['秒數'].to_numpy(dtype=np.int32)
         ep_emotions = group_df['情緒分類'].to_numpy()
-        ep_is_battle = group_df['is_battle'].to_numpy()
+        # 僅在需要時才讀取 is_battle 數據
+        ep_is_battle = group_df['is_battle'].to_numpy() if calculate_battle_segments else None
         ep_is_signin = (group_df['情緒'].to_numpy() == '簽到')
         
-        # 對每一秒進行滑動窗口計算
         for t_start in range(0, max_time - analysis_window + 1):
             t_end = t_start + analysis_window
-            
-            # 創建布林遮罩 (mask)，這是 NumPy 最快的操作之一
             mask = (ep_seconds >= t_start) & (ep_seconds < t_end)
             total_count = np.sum(mask)
             
             if total_count < 10:
                 continue
 
-            # a) 計算情感分類熱度
+            # a) 計算情感分類熱度 (不變)
             window_emotions = ep_emotions[mask]
             emotion_counts = Counter(cat for cat in window_emotions if pd.notna(cat))
-
             for emotion_category, count in emotion_counts.items():
+                # ... (此處邏輯不變) ...
                 min_count_threshold = 7 if "虐點/感動" in emotion_category or "劇情高潮" in emotion_category else 5
                 if count < min_count_threshold: continue
-
                 rate = count / total_count
-                if emotion_category == "LIVE/神配樂" and rate < 0.3:
-                    continue
+                if emotion_category == "LIVE/神配樂" and rate < 0.3: continue
                 score = count * rate
                 all_highlights[emotion_category].append({'集數': ep, 'start_second': t_start, 'score': score, 'count': count, 'rate': rate})
             
-            # b) 計算精彩戰鬥時段
-            battle_count = np.sum(ep_is_battle[mask])
-            if battle_count > 5:
-                 all_highlights["精彩的戰鬥時段"].append({'集數': ep, 'start_second': t_start, 'score': battle_count})
+            # <<< 關鍵修改 2：只有在指令為 True 時才計算 >>>
+            if calculate_battle_segments and ep_is_battle is not None:
+                battle_count = np.sum(ep_is_battle[mask])
+                if battle_count > 5:
+                     all_highlights["精彩的戰鬥時段"].append({'集數': ep, 'start_second': t_start, 'score': battle_count})
 
-            # c) 計算 TOP 彈幕密度
+            # c) 計算 TOP 彈幕密度 (不變，永遠執行)
             density_count = total_count - np.sum(ep_is_signin[mask])
             if density_count > 10:
                 all_highlights["TOP 10 彈幕時段"].append({'集數': ep, 'start_second': t_start, 'score': density_count})
@@ -118,7 +117,9 @@ def get_all_highlights_single_pass(
             current_top_n = 10
         elif "虐點/感動" in category:
             current_top_n = 7
-        elif category == "精彩的戰鬥時段":
+        elif category in "精彩的戰鬥時段":
+            current_top_n = 7
+        elif "LIVE/神配樂" in category:
             current_top_n = 7
         else: # 其他所有情感分類的預設值
             current_top_n = 5
@@ -170,4 +171,5 @@ def get_all_highlights_single_pass(
 if __name__ == '__main__':
     # 這裡可以放置您的測試數據和呼叫邏輯，以便獨立測試此檔案
     pass
+
 
