@@ -93,7 +93,7 @@ def get_all_highlights_single_pass(
             if calculate_battle_segments and ep_is_battle is not None:
                 battle_count = np.sum(ep_is_battle[mask])
                 if battle_count > 5:
-                     all_highlights["精彩的戰鬥時段"].append({'集數': ep, 'start_second': t_start, 'score': battle_count})
+                     all_highlights["精彩的戰鬥/競技片段"].append({'集數': ep, 'start_second': t_start, 'score': battle_count})
 
             # c) 計算 TOP 彈幕密度 (不變，永遠執行)
             density_count = total_count - np.sum(ep_is_signin[mask])
@@ -117,7 +117,7 @@ def get_all_highlights_single_pass(
             current_top_n = 10
         elif "虐點/感動" in category:
             current_top_n = 7
-        elif category in "精彩的戰鬥時段":
+        elif category in "精彩的戰鬥/競技片段":
             current_top_n = 7
         elif "LIVE/神配樂" in category:
             current_top_n = 7
@@ -130,7 +130,7 @@ def get_all_highlights_single_pass(
             if len(selected_list) >= current_top_n: break
             
             ep_row = row['集數']
-            if episode_quota_tracker[ep_row] >= 2 and category not in ["精彩的戰鬥時段", "TOP 10 彈幕時段"]:
+            if episode_quota_tracker[ep_row] >= 2 and category not in ["精彩的戰鬥/競技片段", "TOP 10 彈幕時段"]:
                 continue
     
             is_conflict = any(r['集數'] == ep_row and abs(r['start_second'] - row['start_second']) < min_gap for r in selected_list)
@@ -146,7 +146,7 @@ def get_all_highlights_single_pass(
             except (ValueError, TypeError): return str(ep)
     
         output_list = []
-        final_window = 30 if category not in ["精彩的戰鬥時段", "TOP 10 彈幕時段"] else analysis_window
+        final_window = 30 if category not in ["精彩的戰鬥/競技片段", "TOP 10 彈幕時段"] else analysis_window
         
         for r in selected_list:
             item = {
@@ -171,5 +171,6 @@ def get_all_highlights_single_pass(
 if __name__ == '__main__':
     # 這裡可以放置您的測試數據和呼叫邏輯，以便獨立測試此檔案
     pass
+
 
 
