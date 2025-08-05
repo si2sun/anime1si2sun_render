@@ -45,11 +45,11 @@ templates = Jinja2Templates(directory="templates")
 
 # ====== 資料庫與快取配置 (混合模式) ======
 # 1. 維持原本的 PostgreSQL 資料庫配置方式
-DB_HOST = os.getenv("DB_HOST", "35.223.124.201")
-DB_PORT = os.getenv("DB_PORT", "5432")
-DB_NAME = os.getenv("DB_NAME", "anime1si2sun")
-DB_USER = os.getenv("DB_USER", "postgres")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "lty890509")
+DB_HOST = os.getenv("DB_HOST", "")
+DB_PORT = os.getenv("DB_PORT", "")
+DB_NAME = os.getenv("DB_NAME", "")
+DB_USER = os.getenv("DB_USER", "")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "")
 DATABASE_URL = f"dbname={DB_NAME} user={DB_USER} password={DB_PASSWORD} host={DB_HOST} port={DB_PORT}"
 
 # 2. 從環境變數讀取 Redis 連線位址
@@ -199,15 +199,10 @@ def load_emotion_mappings_from_firestore():
         for doc in anime_label_docs:
             data = doc.to_dict()
             tag_key = data.get('作品分類', doc.id)
-            if not tag_key: continue
-            
             categories = data.get('情感分類')
-            if isinstance(categories, list):
+            if tag_key and isinstance(categories, list):
+                # 直接儲存從 Firestore 讀取的完整列表
                 TAG_COMBINATION_MAPPING[tag_key] = list(set(categories))
-            
-            show_battle = data.get('show_battle_segments', False)
-            if isinstance(show_battle, bool):
-                BATTLE_SEGMENT_SETTINGS[tag_key] = show_battle
         
         logging.info("INFO: 標籤組合與戰鬥時段設定從 Firestore 'anime_label' 集合載入成功。")
         
@@ -243,7 +238,7 @@ async def get_emotion_categories():
     if not EMOTION_CATEGORY_MAPPING:
         raise HTTPException(status_code=500, detail="情感分類映射未成功載入。")
     all_categories = sorted(list(EMOTION_CATEGORY_MAPPING.keys()))
-    all_categories.extend(["精彩的戰鬥時段", "TOP 5 彈幕時段"]) # Note: TOP 5 is a legacy name, analysis does TOP 10.
+    all_categories.extend(["精彩的戰鬥時段", "TOP 10 彈幕時段"]) # Note: TOP 5 is a legacy name, analysis does TOP 10.
     return sorted(list(set(all_categories)))
 
 @app.get("/get_emotions")
@@ -308,19 +303,19 @@ async def get_emotions_api(
             if set(mapping_key.split('|')).issubset(anime_tags_set):
                 collected_emotion_categories.update(categories_list)
         
-        for mapping_key, show_flag in BATTLE_SEGMENT_SETTINGS.items():
-            if set(mapping_key.split('|')).issubset(anime_tags_set) and show_flag:
-                should_calculate_battle = True
-                logging.info(f"  -> 根據標籤組合 '{mapping_key}'，將啟用「精彩的戰鬥時段」分析。")
-                break
-        
-        if not collected_emotion_categories and not should_calculate_battle:
-            raise HTTPException(status_code=404, detail=f"找不到作品 '{anime_name}' (分類: {tags}) 對應的情感分類定義。")
-        
+                # 2. 檢查是否包含戰鬥時段指令
+        if "精彩的戰鬥時段" in collected_emotion_categories:
+            should_calculate_battle = True
+            collected_emotion_categories.remove("精彩的戰鬥時段") # 移除指令，它不是一個真正的情感
+            logging.info(f"  -> 根據 Firestore 設定，將啟用「精彩的戰鬥時段」分析。")
+
         for category in list(collected_emotion_categories):
             if category in EMOTION_CATEGORY_MAPPING:
                 dynamic_emotion_mapping[category] = EMOTION_CATEGORY_MAPPING[category]
 
+        # 4. 檢查是否有任何分析任務
+        if not dynamic_emotion_mapping and not should_calculate_battle:
+            raise HTTPException(status_code=404, detail=f"找不到作品 '{anime_name}' (分類: {tags}) 對應的有效情感分類定義。")
     try:
         result = get_all_highlights_single_pass(
             df=df_danmaku, 
@@ -370,5 +365,6 @@ async def get_emotions_api(
 
     logging.info(f"--- 請求 '{anime_name}' 完整分析處理完成，總耗時: {time.time() - request_start_time:.4f} 秒 ---\n")
     return final_output
+
 
 
