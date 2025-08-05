@@ -40,9 +40,9 @@ def get_all_highlights_single_pass(
     # 僅在需要時才建立 is_battle 欄位，節省資源
     if calculate_battle_segments:
         BATTLE_KEYWORDS = [
-            "經費", "帥", "運鏡", "666", "作畫", "燃", "分鏡", "高能", 
+            "經費", "運鏡", "666", "作畫", "燃", "分鏡", "高能", 
             "外掛", "爆", "炸", "猛", "777", "速度", "流暢", "魄力", "優雅", 
-            "BGM", "打鬥", "強"
+            "BGM", "打鬥", "強" ,"好帥","太帥","超帥"
         ]
         keyword_regex = '|'.join(BATTLE_KEYWORDS)
         df_anime['is_battle'] = df_anime['彈幕'].str.contains(keyword_regex, na=False)
@@ -171,6 +171,7 @@ def get_all_highlights_single_pass(
 if __name__ == '__main__':
     # 這裡可以放置您的測試數據和呼叫邏輯，以便獨立測試此檔案
     pass
+
 
 
 
