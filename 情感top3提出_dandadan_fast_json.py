@@ -152,8 +152,8 @@ def get_all_highlights_single_pass(
                 # 3. 在 60 秒內滑動 30 秒窗口進行精煉
                 if battle_ts_in_window.size > 0:
                     # 滑動窗口的起點從 coarse_start 到 coarse_start + 30
-                    for sub_window_start in range(coarse_start, coarse_start + 31):
-                        sub_window_end = sub_window_start + 30
+                    for sub_window_start in range(coarse_start, coarse_start + 46):
+                        sub_window_end = sub_window_start + 45
                         current_count = np.sum((battle_ts_in_window >= sub_window_start) & (battle_ts_in_window < sub_window_end))
                         if current_count > max_30s_count:
                             max_30s_count = current_count
@@ -195,6 +195,7 @@ def get_all_highlights_single_pass(
     
     logging.info(f"--- 全部分析與精煉完成，總耗時 {time.time() - start_time:.2f} 秒 ---")
     return final_result
+
 
 
 
