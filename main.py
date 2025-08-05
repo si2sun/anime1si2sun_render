@@ -238,7 +238,7 @@ async def get_emotion_categories():
     if not EMOTION_CATEGORY_MAPPING:
         raise HTTPException(status_code=500, detail="情感分類映射未成功載入。")
     all_categories = sorted(list(EMOTION_CATEGORY_MAPPING.keys()))
-    all_categories.extend(["精彩的戰鬥時段", "TOP 10 彈幕時段"]) # Note: TOP 5 is a legacy name, analysis does TOP 10.
+    all_categories.extend(["精彩的戰鬥/競技片段", "TOP 10 彈幕時段"]) # Note: TOP 5 is a legacy name, analysis does TOP 10.
     return sorted(list(set(all_categories)))
 
 @app.get("/get_emotions")
@@ -304,9 +304,9 @@ async def get_emotions_api(
                 collected_emotion_categories.update(categories_list)
         
                 # 2. 檢查是否包含戰鬥時段指令
-        if "精彩的戰鬥時段" in collected_emotion_categories:
+        if "精彩的戰鬥/競技片段" in collected_emotion_categories:
             should_calculate_battle = True
-            collected_emotion_categories.remove("精彩的戰鬥時段") # 移除指令，它不是一個真正的情感
+            collected_emotion_categories.remove("精彩的戰鬥/競技片段") # 移除指令，它不是一個真正的情感
             logging.info(f"  -> 根據 Firestore 設定，將啟用「精彩的戰鬥時段」分析。")
 
         for category in list(collected_emotion_categories):
@@ -339,7 +339,7 @@ async def get_emotions_api(
 
     ordered_final_result = {}
     if not custom_emotions:
-        priority_categories = ["精彩的戰鬥時段","LIVE/神配樂","虐點/感動","突如其來/震驚","虐點","爆笑","劇情高潮/震撼","最精采/激烈的時刻","TOP 10 彈幕時段"]
+        priority_categories = ["精彩的戰鬥/競技片段","LIVE/神配樂","虐點/感動","突如其來/震驚","虐點","爆笑","劇情高潮/震撼","最精采/激烈的時刻","TOP 10 彈幕時段"]
         other_categories_with_counts = sorted([(cat, len(highlights)) for cat, highlights in processed_result.items() if cat not in priority_categories], key=lambda x: x[1], reverse=True)
         top_other_categories = [cat for cat, _ in other_categories_with_counts[:5]]
         ordered_keys = [p_cat for p_cat in priority_categories if p_cat in processed_result]
@@ -365,6 +365,7 @@ async def get_emotions_api(
 
     logging.info(f"--- 請求 '{anime_name}' 完整分析處理完成，總耗時: {time.time() - request_start_time:.4f} 秒 ---\n")
     return final_output
+
 
 
 
