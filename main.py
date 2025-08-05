@@ -287,7 +287,7 @@ async def get_emotions_api(
 
     if custom_emotions:
         logging.info(f"INFO: 使用者自訂模式，選擇的分類: {custom_emotions}")
-        if "精彩的戰鬥時段" in custom_emotions:
+        if "精彩的戰鬥/競技片段" in custom_emotions:
             should_calculate_battle = True
         for category in custom_emotions:
             if category in EMOTION_CATEGORY_MAPPING:
@@ -365,6 +365,7 @@ async def get_emotions_api(
 
     logging.info(f"--- 請求 '{anime_name}' 完整分析處理完成，總耗時: {time.time() - request_start_time:.4f} 秒 ---\n")
     return final_output
+
 
 
 
