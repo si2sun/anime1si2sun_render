@@ -45,11 +45,11 @@ templates = Jinja2Templates(directory="templates")
 
 # ====== 資料庫與快取配置 (混合模式) ======
 # 1. 維持原本的 PostgreSQL 資料庫配置方式
-DB_HOST = os.getenv("DB_HOST", "")
-DB_PORT = os.getenv("DB_PORT", "")
-DB_NAME = os.getenv("DB_NAME", "")
-DB_USER = os.getenv("DB_USER", "")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "")
+DB_HOST = os.getenv("DB_HOST", "35.223.124.201")
+DB_PORT = os.getenv("DB_PORT", "5432")
+DB_NAME = os.getenv("DB_NAME", "anime1si2sun")
+DB_USER = os.getenv("DB_USER", "postgres")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "lty890509")
 DATABASE_URL = f"dbname={DB_NAME} user={DB_USER} password={DB_PASSWORD} host={DB_HOST} port={DB_PORT}"
 
 # 2. 從環境變數讀取 Redis 連線位址
@@ -68,11 +68,11 @@ ANIME_COVER_IMAGE_URLS = {}
 ANIME_TAGS_DB = {}
 TAG_COMBINATION_MAPPING = {}
 EMOTION_CATEGORY_MAPPING = {}
+BATTLE_SEGMENT_SETTINGS = {} # <--- 新增：儲存戰鬥時段設定
 
 # ====== 連線管理 (使用連線池與 Context Manager) ======
 @contextmanager
 def get_db_connection():
-    """從連線池中安全地取得和歸還資料庫連線。"""
     if not db_pool:
         raise HTTPException(status_code=503, detail="資料庫連線池不可用。")
     conn = None
@@ -90,11 +90,10 @@ def get_db_connection():
 # ====== 應用程式生命週期事件 ======
 @app.on_event("startup")
 async def startup_event():
-    """應用程式啟動時執行的所有初始化任務。"""
     global db_pool, redis_client, db
     logging.info("伺服器啟動中，開始初始化所有服務...")
 
-    # 1. 初始化資料庫連線池 (使用寫死的 DATABASE_URL)
+    # 1. 初始化資料庫連線池
     try:
         db_pool = psycopg2.pool.SimpleConnectionPool(1, 10, dsn=DATABASE_URL)
         logging.info("資料庫連線池初始化成功。")
@@ -102,7 +101,7 @@ async def startup_event():
         logging.error(f"建立資料庫連線池失敗: {e}")
         sys.exit(1)
 
-    # 2. 初始化 Redis 連線 (使用環境變數的 REDIS_URL)
+    # 2. 初始化 Redis 連線
     if not REDIS_URL:
         logging.warning("警告：未設定 REDIS_URL 環境變數，快取功能將被禁用。")
     else:
@@ -133,13 +132,12 @@ async def startup_event():
         logging.error(f"Firestore 客戶端初始化失敗: {e}")
         db = None
 
-    # 5. 從 Firestore 載入情感映射數據
+    # 5. 從 Firestore 載入情感映射與設定
     if db:
         load_emotion_mappings_from_firestore()
 
 @app.on_event("shutdown")
 def shutdown_event():
-    """應用程式關閉時，優雅地釋放所有連線。"""
     logging.info("伺服器關閉中...")
     if db_pool:
         db_pool.closeall()
@@ -149,7 +147,6 @@ def shutdown_event():
         logging.info("Redis 連線已關閉。")
 
 def load_anime_data_mapping_from_db():
-    """啟動時從 PostgreSQL 的 anime_url 表加載所有 URL、封面圖資訊和作品分類。"""
     global AVAILABLE_ANIME_NAMES, YOUTUBE_ANIME_EPISODE_URLS, BAHAMUT_ANIME_EPISODE_URLS, ANIME_COVER_IMAGE_URLS, ANIME_TAGS_DB
     total_process_start_time = time.time()
     logging.info("INFO: 從資料庫加載動漫數據映射...")
@@ -160,25 +157,19 @@ def load_anime_data_mapping_from_db():
             with conn.cursor() as cur:
                 cur.execute(sql.SQL('SELECT "作品名", "集數", "巴哈動畫瘋網址", "YT網址", "封面圖", "作品分類" FROM anime_url ORDER BY "作品名", "集數";'))
                 rows = cur.fetchall()
-                if not rows:
-                    logging.warning("⚠️ 警告：資料庫的 'anime_url' 表中沒有找到任何數據。")
-                    return
+                if not rows: logging.warning("⚠️ 警告：資料庫的 'anime_url' 表中沒有找到任何數據。"); return
                 for row in rows:
                     anime_original, episode, bahamut_url, youtube_url, cover_image_val, tags_json = row
                     normalized_anime_name = unicodedata.normalize('NFC', str(anime_original).strip())
                     unique_anime_names_normalized.add(normalized_anime_name)
-                    ep_key_raw = episode
-                    ep_key = ""
+                    ep_key_raw = episode; ep_key = ""
                     if ep_key_raw is not None:
-                        try:
-                            ep_key = str(int(float(ep_key_raw))).strip()
-                        except (ValueError, TypeError):
-                            ep_key = str(ep_key_raw).strip()
+                        try: ep_key = str(int(float(ep_key_raw))).strip()
+                        except (ValueError, TypeError): ep_key = str(ep_key_raw).strip()
                     if normalized_anime_name not in YOUTUBE_ANIME_EPISODE_URLS: YOUTUBE_ANIME_EPISODE_URLS[normalized_anime_name] = {}
                     if normalized_anime_name not in BAHAMUT_ANIME_EPISODE_URLS: BAHAMUT_ANIME_EPISODE_URLS[normalized_anime_name] = {}
                     if youtube_url:
-                        yt_url_str = str(youtube_url).strip()
-                        video_id = None
+                        yt_url_str = str(youtube_url).strip(); video_id = None
                         if "youtube.com/watch?v=" in yt_url_str: video_id = yt_url_str.split("v=")[-1].split("&")[0].split("?")[0]
                         elif "youtu.be/" in yt_url_str: video_id = yt_url_str.split("youtu.be/")[-1].split("?")[0]
                         if video_id: YOUTUBE_ANIME_EPISODE_URLS[normalized_anime_name][ep_key] = video_id
@@ -193,41 +184,47 @@ def load_anime_data_mapping_from_db():
                         if isinstance(tags, list) and all(isinstance(t, str) for t in tags): ANIME_TAGS_DB[normalized_anime_name] = tags
                 AVAILABLE_ANIME_NAMES = sorted(list(unique_anime_names_normalized))
                 logging.info(f"INFO: 從資料庫加載完成。總計 {len(AVAILABLE_ANIME_NAMES)} 部動漫可供搜尋。")
-    except HTTPException as e:
-        logging.error(f"ERROR: 加載動漫數據映射失敗: {e.detail}")
-        sys.exit(1)
     except Exception as e:
-        logging.error(f"ERROR: 加載動漫數據映射時發生未知錯誤: {e}")
-        traceback.print_exc()
-        sys.exit(1)
+        logging.error(f"ERROR: 加載動漫數據映射時發生未知錯誤: {e}"); traceback.print_exc()
     finally:
         total_process_end_time = time.time()
         logging.info(f"--- 資料庫數據載入完成，總耗時 {total_process_end_time - total_process_start_time:.4f} 秒 ---")
 
 def load_emotion_mappings_from_firestore():
-    """從 Firestore 載入情感分類與標籤組合的映射。"""
-    global TAG_COMBINATION_MAPPING, EMOTION_CATEGORY_MAPPING
-    logging.info("\n--- 開始從 Firestore 載入情感映射檔案 ---")
+    global TAG_COMBINATION_MAPPING, EMOTION_CATEGORY_MAPPING, BATTLE_SEGMENT_SETTINGS
+    logging.info("\n--- 開始從 Firestore 載入情感映射與設定檔案 ---")
     start_mapping_load_time = time.time()
     try:
         anime_label_docs = db.collection('anime_label').stream()
         for doc in anime_label_docs:
             data = doc.to_dict()
             tag_key = data.get('作品分類', doc.id)
+            if not tag_key: continue
+            
             categories = data.get('情感分類')
-            if tag_key and isinstance(categories, list): TAG_COMBINATION_MAPPING[tag_key] = list(set(categories))
-        logging.info("INFO: TAG_COMBINATION_MAPPING 從 Firestore 'anime_label' 集合載入成功。")
+            if isinstance(categories, list):
+                TAG_COMBINATION_MAPPING[tag_key] = list(set(categories))
+            
+            show_battle = data.get('show_battle_segments', False)
+            if isinstance(show_battle, bool):
+                BATTLE_SEGMENT_SETTINGS[tag_key] = show_battle
+        
+        logging.info("INFO: 標籤組合與戰鬥時段設定從 Firestore 'anime_label' 集合載入成功。")
+        
         emotion_label_docs = db.collection('emotion_label').stream()
         for doc in emotion_label_docs:
             data = doc.to_dict()
             emotion_category_key = data.get('情感分類', doc.id)
             emotions = data.get('情緒')
-            if emotion_category_key and isinstance(emotions, list): EMOTION_CATEGORY_MAPPING[emotion_category_key] = list(set(emotions))
-        logging.info("INFO: EMOTION_CATEGORY_MAPPING 從 Firestore 'emotion_label' 集合載入成功。")
+            if emotion_category_key and isinstance(emotions, list):
+                EMOTION_CATEGORY_MAPPING[emotion_category_key] = list(set(emotions))
+        logging.info("INFO: 情緒詞從 Firestore 'emotion_label' 集合載入成功。")
+
     except Exception as e:
         logging.error(f"ERROR: 從 Firestore 載入情感映射失敗: {e}")
-    end_mapping_load_time = time.time()
-    logging.info(f"--- 情感映射檔案從 Firestore 載入完成，總耗時 {end_mapping_load_time - start_mapping_load_time:.4f} 秒 ---\n")
+    finally:
+        end_mapping_load_time = time.time()
+        logging.info(f"--- 情感映射與設定檔案從 Firestore 載入完成，總耗時 {end_mapping_load_time - start_mapping_load_time:.4f} 秒 ---\n")
 
 # ====== API 端點 ======
 @app.get("/favicon.ico", include_in_schema=False)
@@ -239,15 +236,14 @@ async def read_root(request: Request): return templates.TemplateResponse("animet
 @app.get("/search_anime_names")
 async def search_anime_names(query: str = Query("", description="搜尋動漫名稱的關鍵字")):
     if not query: return []
-    query_lower = query.lower()
-    return sorted([name for name in AVAILABLE_ANIME_NAMES if query_lower in name.lower()])
+    return sorted([name for name in AVAILABLE_ANIME_NAMES if query.lower() in name.lower()])
 
 @app.get("/get_emotion_categories")
 async def get_emotion_categories():
     if not EMOTION_CATEGORY_MAPPING:
         raise HTTPException(status_code=500, detail="情感分類映射未成功載入。")
     all_categories = sorted(list(EMOTION_CATEGORY_MAPPING.keys()))
-    all_categories.extend(["精彩的戰鬥時段", "TOP 5 彈幕時段"])
+    all_categories.extend(["精彩的戰鬥時段", "TOP 5 彈幕時段"]) # Note: TOP 5 is a legacy name, analysis does TOP 10.
     return sorted(list(set(all_categories)))
 
 @app.get("/get_emotions")
@@ -258,7 +254,6 @@ async def get_emotions_api(
     request_start_time = time.time()
     cache_key = None
 
-    # --- 步驟 1: 檢查快取 ---
     if redis_client:
         emotion_key_part = "default" if not custom_emotions else "|".join(sorted(custom_emotions))
         cache_key = f"anime-result:{anime_name}:{emotion_key_part}"
@@ -266,18 +261,16 @@ async def get_emotions_api(
             cached_result = redis_client.get(cache_key)
             if cached_result:
                 logging.info(f"--- 快取命中 (Cache Hit) for key: {cache_key} ---")
-                logging.info(f"--- 請求 '{anime_name}' 從快取處理完成，耗時: {time.time() - request_start_time:.4f} 秒 ---\n")
                 return json.loads(cached_result)
         except redis.exceptions.RedisError as e:
             logging.error(f"讀取 Redis 快取時出錯: {e}")
 
     logging.info(f"--- 快取未命中 (Cache Miss) for key: {cache_key or 'N/A'}. 開始執行完整分析... ---")
     
-    # --- 步驟 2: 快取未命中，執行完整分析流程 ---
     if not anime_name: raise HTTPException(status_code=400, detail="請提供動漫名稱")
     normalized_anime_name = unicodedata.normalize('NFC', anime_name.strip())
     if normalized_anime_name not in AVAILABLE_ANIME_NAMES:
-        raise HTTPException(status_code=404, detail=f"抱歉，資料庫中沒有找到 '{anime_name}' 的數據。")
+        raise HTTPException(status_code=404, detail=f"資料庫中沒有找到 '{anime_name}' 的數據。")
 
     anime_episode_urls = YOUTUBE_ANIME_EPISODE_URLS.get(normalized_anime_name, {})
     bahamut_episode_urls = BAHAMUT_ANIME_EPISODE_URLS.get(normalized_anime_name, {})
@@ -287,44 +280,57 @@ async def get_emotions_api(
         with get_db_connection() as conn, conn.cursor() as cur:
             cur.execute(sql.SQL('SELECT "彈幕", "label", "label2", "作品名", "集數", "時間", "情緒" FROM anime_danmaku WHERE "作品名" = %s;'),(normalized_anime_name,))
             rows = cur.fetchall()
-            if not rows: raise HTTPException(status_code=404, detail=f"抱歉，資料庫中沒有找到 '{normalized_anime_name}' 的彈幕數據。")
-            column_names = [desc[0] for desc in cur.description]
-            df_danmaku = pd.DataFrame(rows, columns=column_names)
+            if not rows: raise HTTPException(status_code=404, detail=f"資料庫中沒有找到 '{normalized_anime_name}' 的彈幕數據。")
+            df_danmaku = pd.DataFrame(rows, columns=[desc[0] for desc in cur.description])
             df_danmaku['集數'] = df_danmaku['集數'].astype(str)
             logging.info(f"INFO: 從資料庫成功載入 {len(df_danmaku)} 筆 '{normalized_anime_name}' 的彈幕數據。")
-    except HTTPException as e:
-        raise e
     except Exception as e:
-        logging.error(f"ERROR: 從資料庫讀取彈幕數據時發生錯誤: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"從資料庫讀取彈幕數據時發生錯誤: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"從資料庫讀取彈幕數據時發生錯誤: {e}")
 
     dynamic_emotion_mapping = {}
+    should_calculate_battle = False
+
     if custom_emotions:
-        logging.info(f"INFO: 使用者自訂模式，選擇的情感分類: {custom_emotions}")
+        logging.info(f"INFO: 使用者自訂模式，選擇的分類: {custom_emotions}")
+        if "精彩的戰鬥時段" in custom_emotions:
+            should_calculate_battle = True
         for category in custom_emotions:
-            if category in EMOTION_CATEGORY_MAPPING: dynamic_emotion_mapping[category] = EMOTION_CATEGORY_MAPPING[category]
+            if category in EMOTION_CATEGORY_MAPPING:
+                dynamic_emotion_mapping[category] = EMOTION_CATEGORY_MAPPING[category]
     else:
         logging.info("INFO: 使用預設模式，根據作品分類生成情感映射。")
         tags = ANIME_TAGS_DB.get(normalized_anime_name, [])
         if not tags: raise HTTPException(status_code=404, detail=f"找不到作品 '{anime_name}' 的作品分類數據。")
         anime_tags_set = set(tags)
         collected_emotion_categories = set()
+        
         for mapping_key, categories_list in TAG_COMBINATION_MAPPING.items():
-            mapping_tags_set = set(mapping_key.split('|'))
-            if mapping_tags_set and mapping_tags_set.issubset(anime_tags_set):
-                logging.info(f"  -> 匹配到標籤組合 '{mapping_key}'，加入情感分類: {categories_list}")
+            if set(mapping_key.split('|')).issubset(anime_tags_set):
                 collected_emotion_categories.update(categories_list)
-        if not collected_emotion_categories: raise HTTPException(status_code=404, detail=f"找不到作品 '{anime_name}' (作品分類: {tags}) 對應的情感分類定義。")
-        categories = list(collected_emotion_categories)
-        for category in categories:
-            if category in EMOTION_CATEGORY_MAPPING: dynamic_emotion_mapping[category] = EMOTION_CATEGORY_MAPPING[category]
-        if not dynamic_emotion_mapping: raise HTTPException(status_code=404, detail=f"根據作品分類 '{tags}' 組合出的情感分類 ({categories}) 沒有對應的原始情緒詞。")
+        
+        for mapping_key, show_flag in BATTLE_SEGMENT_SETTINGS.items():
+            if set(mapping_key.split('|')).issubset(anime_tags_set) and show_flag:
+                should_calculate_battle = True
+                logging.info(f"  -> 根據標籤組合 '{mapping_key}'，將啟用「精彩的戰鬥時段」分析。")
+                break
+        
+        if not collected_emotion_categories and not should_calculate_battle:
+            raise HTTPException(status_code=404, detail=f"找不到作品 '{anime_name}' (分類: {tags}) 對應的情感分類定義。")
+        
+        for category in list(collected_emotion_categories):
+            if category in EMOTION_CATEGORY_MAPPING:
+                dynamic_emotion_mapping[category] = EMOTION_CATEGORY_MAPPING[category]
 
     try:
-        result = get_all_highlights_single_pass(df=df_danmaku, anime_name=normalized_anime_name, emotion_mapping=dynamic_emotion_mapping)
+        result = get_all_highlights_single_pass(
+            df=df_danmaku, 
+            anime_name=normalized_anime_name, 
+            emotion_mapping=dynamic_emotion_mapping,
+            calculate_battle_segments=should_calculate_battle
+        )
     except Exception as e:
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"伺服器內部錯誤，分析失敗: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"伺服器內部錯誤，分析失敗: {e}")
 
     if not result: raise HTTPException(status_code=404, detail=f"抱歉，沒有找到 '{normalized_anime_name}' 的熱點數據。")
     
@@ -332,16 +338,13 @@ async def get_emotions_api(
     for emotion_category, highlights_list in result.items():
         if isinstance(highlights_list, list) and highlights_list:
             if custom_emotions and emotion_category not in custom_emotions: continue
-            processed_highlights = []
-            for item in highlights_list:
-                processed_item = {k: (int(v) if isinstance(v, np.integer) else v) for k, v in item.items()}
-                processed_highlights.append(processed_item)
+            processed_highlights = [{k: (int(v) if isinstance(v, np.integer) else v) for k, v in item.items()} for item in highlights_list]
             processed_result[emotion_category] = processed_highlights
     if not processed_result: raise HTTPException(status_code=404, detail=f"抱歉，作品 '{normalized_anime_name}' 處理後沒有發現有效的亮點。")
 
     ordered_final_result = {}
     if not custom_emotions:
-        priority_categories = ["LIVE/神配樂","精彩的戰鬥時段","虐點/感動","突如其來/震驚","虐點","爆笑","劇情高潮/震撼","最精采/激烈的時刻","TOP 10 彈幕時段"]
+        priority_categories = ["精彩的戰鬥時段","LIVE/神配樂","虐點/感動","突如其來/震驚","虐點","爆笑","劇情高潮/震撼","最精采/激烈的時刻","TOP 10 彈幕時段"]
         other_categories_with_counts = sorted([(cat, len(highlights)) for cat, highlights in processed_result.items() if cat not in priority_categories], key=lambda x: x[1], reverse=True)
         top_other_categories = [cat for cat, _ in other_categories_with_counts[:5]]
         ordered_keys = [p_cat for p_cat in priority_categories if p_cat in processed_result]
@@ -358,11 +361,8 @@ async def get_emotions_api(
         **ordered_final_result
     }
     
-    # --- 步驟 3: 將新結果存入快取 ---
     if redis_client and cache_key:
         try:
-            # 將 final_output 轉換為 JSON 字串並存入 Redis，設定過期時間為 24 小時 (86400秒)
-            # 使用 ensure_ascii=False 來正確處理中文字元
             redis_client.set(cache_key, json.dumps(final_output, ensure_ascii=False), ex=86400)
             logging.info(f"--- 結果已成功寫入快取，鍵為: {cache_key} ---")
         except redis.exceptions.RedisError as e:
@@ -370,4 +370,5 @@ async def get_emotions_api(
 
     logging.info(f"--- 請求 '{anime_name}' 完整分析處理完成，總耗時: {time.time() - request_start_time:.4f} 秒 ---\n")
     return final_output
+
 
