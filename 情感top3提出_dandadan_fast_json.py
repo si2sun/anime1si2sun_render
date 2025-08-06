@@ -5,6 +5,7 @@ import time
 import json
 import logging
 from collections import defaultdict, Counter
+from io import StringIO
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -20,10 +21,10 @@ def get_all_highlights_single_pass(
     """
     【最終效能優化版】 - V14 (兩階段精煉版 - 最終時長配置)
     """
-    logging.info("\n--- 開始執行最終版高效單次掃描分析 (V14) ---")
+    logging.info(f"\n--- 開始執行分析 (戰鬥時段分析: {'啟用' if calculate_battle_segments else '禁用'}) ---")
     start_time = time.time()
 
-    # --- 1. 數據預處理 (不變) ---
+    # --- 1. 數據預處理 ---
     df_anime = df[df['作品名'] == anime_name].copy()
     if df_anime.empty: return {}
 
@@ -56,7 +57,7 @@ def get_all_highlights_single_pass(
     episode_max_times = df_anime.groupby('集數')['秒數'].max().to_dict()
     ep_numpy_data = {}
 
-    # --- 2. 單次滑動窗口掃描 (粗篩) (不變) ---
+    # --- 2. 單次滑動窗口掃描 (粗篩) ---
     for ep, group_df in df_anime.groupby('集數'):
         max_time = episode_max_times.get(ep, 0)
         if not max_time or max_time < analysis_window: continue
@@ -88,10 +89,7 @@ def get_all_highlights_single_pass(
             density_count = total_count - np.sum(ep_is_signin[mask])
             if density_count > 10: all_highlights["TOP 10 彈幕時段"].append({'集數': ep, 'start_second': t_start, 'score': density_count})
 
-    scan_end_time = time.time()
-    logging.info(f"--- 全集粗篩完成，耗時 {scan_end_time - start_time:.2f} 秒 ---")
-    
-    # --- 3. 結果後處理與精煉 (不變) ---
+    # --- 3. 結果後處理與精煉 ---
     final_result = {}
     for category, highlights in all_highlights.items():
         if not highlights: continue
@@ -136,30 +134,22 @@ def get_all_highlights_single_pass(
                         sub_window_end = sub_window_start + refined_window_size
                         current_count = np.sum((battle_ts_in_window >= sub_window_start) & (battle_ts_in_window < sub_window_end))
                         if current_count > max_count:
-                            max_count = current_count
-                            best_start = sub_window_start
+                            max_count = current_count; best_start = sub_window_start
                 
                 refined_r = r.copy(); refined_r['start_second'] = best_start
                 processing_list.append(refined_r)
         else:
             processing_list = selected_list
 
-        # --- 格式化輸出 ---
         def seconds_to_time_str(s): s = int(s); return f"{s//3600:02d}:{(s%3600)//60:02d}:{s%60:02d}"
         def format_episode(ep):
             try: num_ep = float(ep); return str(int(num_ep)) if num_ep == int(num_ep) else str(num_ep)
             except (ValueError, TypeError): return str(ep)
     
         output_list = []
-        
-        # <<< 這裡是唯一的修改點 >>>
-        # 根據分類設定不同的最終顯示時長
-        if category == "精彩的戰鬥/競技片段":
-            final_window = 45
-        elif category == "TOP 10 彈幕時段":
-            final_window = analysis_window  # 60秒
-        else:
-            final_window = 30
+        if category == "精彩的戰鬥/競技片段": final_window = 45
+        elif category == "TOP 10 彈幕時段": final_window = analysis_window
+        else: final_window = 30
         
         for r in processing_list:
             item = {
@@ -168,24 +158,11 @@ def get_all_highlights_single_pass(
                 'start_second': int(r['start_second'])
             }
             if 'rate' in r:
-                item['熱度分數'] = round(r['score'], 2)
-                item['彈幕數量'] = int(r['count'])
-                item['情緒佔比'] = f"{r['rate']:.1%}"
+                item['熱度分數'] = round(r['score'], 2); item['彈幕數量'] = int(r['count']); item['情緒佔比'] = f"{r['rate']:.1%}"
             else:
                 item['彈幕數量'] = int(r['score'])
             output_list.append(item)
-            
         final_result[category] = output_list
     
     logging.info(f"--- 全部分析與精煉完成，總耗時 {time.time() - start_time:.2f} 秒 ---")
     return final_result
-
-
-
-
-
-
-
-
-
-
