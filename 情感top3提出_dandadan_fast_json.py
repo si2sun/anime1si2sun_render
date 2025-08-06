@@ -18,7 +18,7 @@ def get_all_highlights_single_pass(
     top_n: int = 5
 ):
     """
-    【最終效能優化版】 - V14 (兩階段精煉版 - 45秒)
+    【最終效能優化版】 - V14 (兩階段精煉版 - 最終時長配置)
     """
     logging.info("\n--- 開始執行最終版高效單次掃描分析 (V14) ---")
     start_time = time.time()
@@ -40,7 +40,7 @@ def get_all_highlights_single_pass(
             "經費", "運鏡", "666", "作畫", "燃", "分鏡", "高能", 
             "外掛", "爆", "炸", "猛", "速度", "流暢", "魄力", "優雅", 
             "BGM", "打鬥", "強","太帥","超帥","星爆", "雞皮疙瘩","頭皮發麻","神仙打架","優秀", "歐拉歐拉歐拉","無駄無駄無駄",
-            "畫面","帥啊","前方","名場面","精采"
+            "畫面","帥啊","前方","名場面","精采", "atomic", "Explosion", "EX咖哩棒", "領域展開"
         ]
         keyword_regex = '|'.join(BATTLE_KEYWORDS)
         df_anime['is_battle'] = df_anime['彈幕'].str.contains(keyword_regex, na=False)
@@ -90,7 +90,7 @@ def get_all_highlights_single_pass(
     scan_end_time = time.time()
     logging.info(f"--- 全集粗篩完成，耗時 {scan_end_time - start_time:.2f} 秒 ---")
     
-    # --- 3. 結果後處理與精煉 ---
+    # --- 3. 結果後處理與精煉 (不變) ---
     final_result = {}
     for category, highlights in all_highlights.items():
         if not highlights: continue
@@ -127,12 +127,10 @@ def get_all_highlights_single_pass(
                 mask_60s = (numpy_data['seconds'] >= coarse_start) & (numpy_data['seconds'] < coarse_start + 60)
                 battle_ts_in_window = numpy_data['seconds'][mask_60s & numpy_data['is_battle']]
                 
-                # <<< 修改點 1：將精煉時長從 30 秒改為 45 秒 >>>
                 refined_window_size = 45
                 best_start = coarse_start; max_count = -1
 
                 if battle_ts_in_window.size > 0:
-                    # 滑動窗口的起點從 coarse_start 到 coarse_start + (60 - 45)
                     for sub_window_start in range(coarse_start, coarse_start + (60 - refined_window_size) + 1):
                         sub_window_end = sub_window_start + refined_window_size
                         current_count = np.sum((battle_ts_in_window >= sub_window_start) & (battle_ts_in_window < sub_window_end))
@@ -140,8 +138,7 @@ def get_all_highlights_single_pass(
                             max_count = current_count
                             best_start = sub_window_start
                 
-                refined_r = r.copy()
-                refined_r['start_second'] = best_start
+                refined_r = r.copy(); refined_r['start_second'] = best_start
                 processing_list.append(refined_r)
         else:
             processing_list = selected_list
@@ -154,8 +151,14 @@ def get_all_highlights_single_pass(
     
         output_list = []
         
-        # <<< 修改點 2：將最終顯示時長從 30 秒改為 45 秒 >>>
-        final_window = 45 if category != "TOP 10 彈幕時段" else analysis_window
+        # <<< 這裡是唯一的修改點 >>>
+        # 根據分類設定不同的最終顯示時長
+        if category == "精彩的戰鬥/競技片段":
+            final_window = 45
+        elif category == "TOP 10 彈幕時段":
+            final_window = analysis_window  # 60秒
+        else:
+            final_window = 30
         
         for r in processing_list:
             item = {
@@ -175,8 +178,6 @@ def get_all_highlights_single_pass(
     
     logging.info(f"--- 全部分析與精煉完成，總耗時 {time.time() - start_time:.2f} 秒 ---")
     return final_result
-
-
 
 
 
