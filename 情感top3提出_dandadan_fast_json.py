@@ -85,7 +85,7 @@ def get_all_highlights_single_pass(
                 rate = count / total_count
                 if category == "LIVE/神配樂" and rate < 0.3: continue
                 score = count * rate
-                all_highlights[category].append({'集數': ep, 'start_second': t_start, 'score': score, 'count': count})
+                all_highlights[category].append({'集數': ep, 'start_second': t_start, 'score': score, 'count': count, 'rate': rate})
 
             # b) 計算戰鬥時段熱度
             if calculate_battle_segments and 'is_battle' in ep_numpy_data[ep]:
@@ -183,8 +183,15 @@ def get_all_highlights_single_pass(
         
         for r in processing_list:
             item = {'集數': format_episode(r['集數']),'時段': f"{seconds_to_time_str(r['start_second'])}~{seconds_to_time_str(r['start_second'] + final_window)}",'start_second': int(r['start_second'])}
-            if 'count' in r: item['彈幕數量'] = int(r['count'])
-            if 'score' in r: item['熱度分數'] = round(r['score'], 2)
+            if 'rate' in r:
+                item['熱度分數'] = round(r['score'], 2)
+                item['彈幕數量'] = int(r['count'])
+                # 將 rate 格式化為帶有一位小數的百分比字串
+                item['情緒佔比'] = f"{r['rate']:.1%}"
+            else:
+                # 處理戰鬥時段和彈幕密度這種沒有 rate 的情況
+                item['彈幕數量'] = int(r['score'])
+                item['熱度分數'] = round(r['score'], 2)
             output_list.append(item)
             
         final_result[category] = output_list
@@ -196,3 +203,4 @@ def get_all_highlights_single_pass(
 if __name__ == '__main__':
     # ... (此處的獨立測試腳本完全不變) ...
     pass
+
