@@ -40,7 +40,7 @@ def get_all_highlights_single_pass(
             "經費", "運鏡", "66666", "作畫", "燃", "分鏡", "高能", 
             "外掛", "爆", "炸", "猛", "速度", "流暢", "魄力", "優雅", 
             "BGM", "打鬥", "強","太帥","超帥","星爆", "雞皮疙瘩","頭皮發麻","神仙打架","優秀", "歐拉歐拉歐拉","無駄無駄無駄",
-            "畫面","帥啊","前方","名場面","精采", "atomic", "Explosion", "EX咖哩棒", "領域展開"
+            "畫面","帥啊","前方","名場面","精采", "atomic", "Explosion", "Excalibur", "領域展開"
         ]
         keyword_regex = '|'.join(BATTLE_KEYWORDS)
         df_anime['is_battle'] = df_anime['彈幕'].str.contains(keyword_regex, na=False)
@@ -178,6 +178,7 @@ def get_all_highlights_single_pass(
     
     logging.info(f"--- 全部分析與精煉完成，總耗時 {time.time() - start_time:.2f} 秒 ---")
     return final_result
+
 
 
 
