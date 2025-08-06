@@ -10,12 +10,12 @@ import sys
 import json
 import unicodedata
 import psycopg2
-from psycopg2 import sql, pool # <--- 導入連線池
+from psycopg2 import sql, pool
 from contextlib import contextmanager
 import time
 import traceback
 import logging
-import redis # <--- 導入 Redis
+import redis
 
 # 導入 Firestore 相關模組
 from google.cloud import firestore
@@ -35,7 +35,7 @@ app = FastAPI()
 # ====== CORS 配置 ======
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # 允許所有來源，方便開發。正式上線建議換成您的前端網址
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -43,24 +43,19 @@ app.add_middleware(
 
 templates = Jinja2Templates(directory="templates")
 
-# ====== 資料庫與快取配置 (混合模式) ======
-# 1. 維持原本的 PostgreSQL 資料庫配置方式
-DB_HOST = os.getenv("DB_HOST", "")
-DB_PORT = os.getenv("DB_PORT", "")
-DB_NAME = os.getenv("DB_NAME", "")
-DB_USER = os.getenv("DB_USER", "")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "")
+# ====== 資料庫與快取配置 ======
+DB_HOST = os.getenv("DB_HOST", "35.223.124.201")
+DB_PORT = os.getenv("DB_PORT", "5432")
+DB_NAME = os.getenv("DB_NAME", "anime1si2sun")
+DB_USER = os.getenv("DB_USER", "postgres")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "lty890509")
 DATABASE_URL = f"dbname={DB_NAME} user={DB_USER} password={DB_PASSWORD} host={DB_HOST} port={DB_PORT}"
-
-# 2. 從環境變數讀取 Redis 連線位址
 REDIS_URL = os.getenv("REDIS_URL")
 
-# ====== 全域連線變數 ======
+# ====== 全域變數 ======
 db_pool = None
 redis_client = None
-db = None # Firestore client
-
-# 全域資料變數
+db = None
 AVAILABLE_ANIME_NAMES = []
 YOUTUBE_ANIME_EPISODE_URLS = {}
 BAHAMUT_ANIME_EPISODE_URLS = {}
@@ -68,40 +63,31 @@ ANIME_COVER_IMAGE_URLS = {}
 ANIME_TAGS_DB = {}
 TAG_COMBINATION_MAPPING = {}
 EMOTION_CATEGORY_MAPPING = {}
-BATTLE_SEGMENT_SETTINGS = {} # <--- 新增：儲存戰鬥時段設定
+CACHE_VERSION = "v2.0" # 重大邏輯修改後更新版本號，使舊快取失效
 
-# ====== 連線管理 (使用連線池與 Context Manager) ======
+# ====== 連線管理與生命週期事件 ======
 @contextmanager
 def get_db_connection():
-    if not db_pool:
-        raise HTTPException(status_code=503, detail="資料庫連線池不可用。")
+    if not db_pool: raise HTTPException(status_code=503, detail="資料庫連線池不可用。")
     conn = None
     try:
         conn = db_pool.getconn()
         yield conn
     except psycopg2.Error as e:
-        logging.error(f"從連線池取得連線時出錯: {e}")
-        traceback.print_exc()
+        logging.error(f"從連線池取得連線時出錯: {e}"); traceback.print_exc()
         raise HTTPException(status_code=503, detail="資料庫服務暫時不可用。")
     finally:
-        if conn:
-            db_pool.putconn(conn)
+        if conn: db_pool.putconn(conn)
 
-# ====== 應用程式生命週期事件 ======
 @app.on_event("startup")
 async def startup_event():
     global db_pool, redis_client, db
     logging.info("伺服器啟動中，開始初始化所有服務...")
-
-    # 1. 初始化資料庫連線池
     try:
         db_pool = psycopg2.pool.SimpleConnectionPool(1, 10, dsn=DATABASE_URL)
         logging.info("資料庫連線池初始化成功。")
     except psycopg2.Error as e:
-        logging.error(f"建立資料庫連線池失敗: {e}")
-        sys.exit(1)
-
-    # 2. 初始化 Redis 連線
+        logging.error(f"建立資料庫連線池失敗: {e}"); sys.exit(1)
     if not REDIS_URL:
         logging.warning("警告：未設定 REDIS_URL 環境變數，快取功能將被禁用。")
     else:
@@ -110,14 +96,12 @@ async def startup_event():
             redis_client.ping()
             logging.info(f"Redis 快取連線成功 (Host: {redis_client.connection_pool.connection_kwargs.get('host')})。")
         except redis.exceptions.ConnectionError as e:
-            logging.error(f"無法連線到 Redis (URL: {REDIS_URL})，快取功能將被禁用: {e}")
-            redis_client = None
-
-    # 3. 載入動漫元數據
+            logging.error(f"無法連線到 Redis，快取功能將被禁用: {e}"); redis_client = None
+    
     load_anime_data_mapping_from_db()
-
-    # 4. 初始化 Firestore 客戶端
+    
     try:
+        # 認證邏輯與您原始版本保持一致
         if os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON"):
             credentials_json = json.loads(os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON"))
             from google.oauth2 import service_account
@@ -129,27 +113,20 @@ async def startup_event():
             db = firestore.Client(database="anime-label")
         logging.info("Firestore 客戶端初始化成功。")
     except Exception as e:
-        logging.error(f"Firestore 客戶端初始化失敗: {e}")
-        db = None
-
-    # 5. 從 Firestore 載入情感映射與設定
+        logging.error(f"Firestore 客戶端初始化失敗: {e}"); db = None
+    
     if db:
         load_emotion_mappings_from_firestore()
 
 @app.on_event("shutdown")
 def shutdown_event():
     logging.info("伺服器關閉中...")
-    if db_pool:
-        db_pool.closeall()
-        logging.info("資料庫連線池已關閉。")
-    if redis_client:
-        redis_client.close()
-        logging.info("Redis 連線已關閉。")
+    if db_pool: db_pool.closeall(); logging.info("資料庫連線池已關閉。")
+    if redis_client: redis_client.close(); logging.info("Redis 連線已關閉。")
 
 def load_anime_data_mapping_from_db():
     global AVAILABLE_ANIME_NAMES, YOUTUBE_ANIME_EPISODE_URLS, BAHAMUT_ANIME_EPISODE_URLS, ANIME_COVER_IMAGE_URLS, ANIME_TAGS_DB
-    total_process_start_time = time.time()
-    logging.info("INFO: 從資料庫加載動漫數據映射...")
+    total_process_start_time = time.time(); logging.info("INFO: 從資料庫加載動漫數據映射...")
     AVAILABLE_ANIME_NAMES.clear(); YOUTUBE_ANIME_EPISODE_URLS.clear(); BAHAMUT_ANIME_EPISODE_URLS.clear(); ANIME_COVER_IMAGE_URLS.clear(); ANIME_TAGS_DB.clear()
     unique_anime_names_normalized = set()
     try:
@@ -191,8 +168,8 @@ def load_anime_data_mapping_from_db():
         logging.info(f"--- 資料庫數據載入完成，總耗時 {total_process_end_time - total_process_start_time:.4f} 秒 ---")
 
 def load_emotion_mappings_from_firestore():
-    global TAG_COMBINATION_MAPPING, EMOTION_CATEGORY_MAPPING, BATTLE_SEGMENT_SETTINGS
-    logging.info("\n--- 開始從 Firestore 載入情感映射與設定檔案 ---")
+    global TAG_COMBINATION_MAPPING, EMOTION_CATEGORY_MAPPING
+    logging.info("\n--- 開始從 Firestore 載入情感映射檔案 ---")
     start_mapping_load_time = time.time()
     try:
         anime_label_docs = db.collection('anime_label').stream()
@@ -201,10 +178,7 @@ def load_emotion_mappings_from_firestore():
             tag_key = data.get('作品分類', doc.id)
             categories = data.get('情感分類')
             if tag_key and isinstance(categories, list):
-                # 直接儲存從 Firestore 讀取的完整列表
                 TAG_COMBINATION_MAPPING[tag_key] = list(set(categories))
-        
-        logging.info("INFO: 標籤組合與戰鬥時段設定從 Firestore 'anime_label' 集合載入成功。")
         
         emotion_label_docs = db.collection('emotion_label').stream()
         for doc in emotion_label_docs:
@@ -213,13 +187,12 @@ def load_emotion_mappings_from_firestore():
             emotions = data.get('情緒')
             if emotion_category_key and isinstance(emotions, list):
                 EMOTION_CATEGORY_MAPPING[emotion_category_key] = list(set(emotions))
-        logging.info("INFO: 情緒詞從 Firestore 'emotion_label' 集合載入成功。")
-
+        logging.info("INFO: 情感映射檔案從 Firestore 載入成功。")
     except Exception as e:
         logging.error(f"ERROR: 從 Firestore 載入情感映射失敗: {e}")
     finally:
         end_mapping_load_time = time.time()
-        logging.info(f"--- 情感映射與設定檔案從 Firestore 載入完成，總耗時 {end_mapping_load_time - start_mapping_load_time:.4f} 秒 ---\n")
+        logging.info(f"--- 情感映射檔案載入完成，總耗時 {end_mapping_load_time - start_mapping_load_time:.4f} 秒 ---\n")
 
 # ====== API 端點 ======
 @app.get("/favicon.ico", include_in_schema=False)
@@ -235,10 +208,9 @@ async def search_anime_names(query: str = Query("", description="搜尋動漫名
 
 @app.get("/get_emotion_categories")
 async def get_emotion_categories():
-    if not EMOTION_CATEGORY_MAPPING:
-        raise HTTPException(status_code=500, detail="情感分類映射未成功載入。")
+    if not EMOTION_CATEGORY_MAPPING: raise HTTPException(status_code=500, detail="情感分類映射未成功載入。")
     all_categories = sorted(list(EMOTION_CATEGORY_MAPPING.keys()))
-    all_categories.extend(["精彩的戰鬥/競技片段", "TOP 10 彈幕時段"]) # Note: TOP 5 is a legacy name, analysis does TOP 10.
+    all_categories.extend(["精彩的戰鬥/競技片段", "TOP 10 彈幕時段"])
     return sorted(list(set(all_categories)))
 
 @app.get("/get_emotions")
@@ -248,10 +220,9 @@ async def get_emotions_api(
 ):
     request_start_time = time.time()
     cache_key = None
-
     if redis_client:
         emotion_key_part = "default" if not custom_emotions else "|".join(sorted(custom_emotions))
-        cache_key = f"anime-result:{anime_name}:{emotion_key_part}"
+        cache_key = f"{CACHE_VERSION}:anime-result:{anime_name}:{emotion_key_part}"
         try:
             cached_result = redis_client.get(cache_key)
             if cached_result:
@@ -287,35 +258,37 @@ async def get_emotions_api(
 
     if custom_emotions:
         logging.info(f"INFO: 使用者自訂模式，選擇的分類: {custom_emotions}")
-        if "精彩的戰鬥/競技片段" in custom_emotions:
-            should_calculate_battle = True
+        if "精彩的戰鬥/競技片段" in custom_emotions: should_calculate_battle = True
         for category in custom_emotions:
             if category in EMOTION_CATEGORY_MAPPING:
                 dynamic_emotion_mapping[category] = EMOTION_CATEGORY_MAPPING[category]
     else:
-        logging.info("INFO: 使用預設模式，根據作品分類生成情感映射。")
+        logging.info("INFO: 使用預設模式，根據作品分類生成情感映射（最精確匹配）。")
         tags = ANIME_TAGS_DB.get(normalized_anime_name, [])
         if not tags: raise HTTPException(status_code=404, detail=f"找不到作品 '{anime_name}' 的作品分類數據。")
         anime_tags_set = set(tags)
-        collected_emotion_categories = set()
-        
-        for mapping_key, categories_list in TAG_COMBINATION_MAPPING.items():
-            if set(mapping_key.split('|')).issubset(anime_tags_set):
-                collected_emotion_categories.update(categories_list)
-        
-                # 2. 檢查是否包含戰鬥時段指令
+        best_match_key = None
+        max_match_count = -1
+        for mapping_key in TAG_COMBINATION_MAPPING.keys():
+            mapping_tags_set = set(mapping_key.split('|'))
+            if mapping_tags_set.issubset(anime_tags_set):
+                if len(mapping_tags_set) > max_match_count:
+                    max_match_count = len(mapping_tags_set)
+                    best_match_key = mapping_key
+        if not best_match_key:
+            raise HTTPException(status_code=404, detail=f"找不到與作品 '{anime_name}' (分類: {tags}) 匹配的任何情感分類定義。")
+        logging.info(f"  -> 最精確匹配到的作品分類是: '{best_match_key}'")
+        collected_emotion_categories = set(TAG_COMBINATION_MAPPING.get(best_match_key, []))
         if "精彩的戰鬥/競技片段" in collected_emotion_categories:
             should_calculate_battle = True
-            collected_emotion_categories.remove("精彩的戰鬥/競技片段") # 移除指令，它不是一個真正的情感
+            collected_emotion_categories.remove("精彩的戰鬥/競技片段")
             logging.info(f"  -> 根據 Firestore 設定，將啟用「精彩的戰鬥時段」分析。")
-
-        for category in list(collected_emotion_categories):
+        for category in collected_emotion_categories:
             if category in EMOTION_CATEGORY_MAPPING:
                 dynamic_emotion_mapping[category] = EMOTION_CATEGORY_MAPPING[category]
-
-        # 4. 檢查是否有任何分析任務
         if not dynamic_emotion_mapping and not should_calculate_battle:
-            raise HTTPException(status_code=404, detail=f"找不到作品 '{anime_name}' (分類: {tags}) 對應的有效情感分類定義。")
+            raise HTTPException(status_code=404, detail=f"作品 '{anime_name}' 的最佳匹配 '{best_match_key}' 沒有對應任何有效的分析任務。")
+    
     try:
         result = get_all_highlights_single_pass(
             df=df_danmaku, 
@@ -340,12 +313,11 @@ async def get_emotions_api(
     ordered_final_result = {}
     if not custom_emotions:
         priority_categories = ["精彩的戰鬥/競技片段","LIVE/神配樂","正能量片段","虐點/感動","突如其來/震驚","虐點","爆笑","劇情高潮/震撼","最精采/激烈的時刻","TOP 10 彈幕時段"]
-        other_categories_with_counts = sorted([(cat, len(highlights)) for cat, highlights in processed_result.items() if cat not in priority_categories], key=lambda x: x[1], reverse=True)
-        top_other_categories = [cat for cat, _ in other_categories_with_counts[:5]]
-        ordered_keys = [p_cat for p_cat in priority_categories if p_cat in processed_result]
-        ordered_keys.extend([t_cat for t_cat in top_other_categories if t_cat not in ordered_keys])
-        ordered_keys.extend(sorted([k for k in processed_result if k not in ordered_keys]))
-        for key in ordered_keys: ordered_final_result[key] = processed_result[key]
+        priority_keys_found = [key for key in priority_categories if key in processed_result]
+        other_keys_found = sorted([key for key in processed_result if key not in priority_keys_found])
+        final_ordered_keys = priority_keys_found + other_keys_found
+        for key in final_ordered_keys:
+            ordered_final_result[key] = processed_result[key]
     else:
         ordered_final_result = dict(sorted(processed_result.items()))
 
@@ -365,7 +337,6 @@ async def get_emotions_api(
 
     logging.info(f"--- 請求 '{anime_name}' 完整分析處理完成，總耗時: {time.time() - request_start_time:.4f} 秒 ---\n")
     return final_output
-
 
 
 
