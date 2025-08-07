@@ -101,7 +101,6 @@ async def startup_event():
     load_anime_data_mapping_from_db()
     
     try:
-        # 認證邏輯與您原始版本保持一致
         if os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON"):
             credentials_json = json.loads(os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON"))
             from google.oauth2 import service_account
@@ -263,31 +262,35 @@ async def get_emotions_api(
             if category in EMOTION_CATEGORY_MAPPING:
                 dynamic_emotion_mapping[category] = EMOTION_CATEGORY_MAPPING[category]
     else:
-        logging.info("INFO: 使用預設模式，根據作品分類生成情感映射（最精確匹配）。")
+        # <<< 這裡是唯一的重大修改點：恢復並改進「收集所有匹配」的邏輯 >>>
+        logging.info("INFO: 使用預設模式，根據作品分類生成情感映射（收集所有匹配）。")
         tags = ANIME_TAGS_DB.get(normalized_anime_name, [])
         if not tags: raise HTTPException(status_code=404, detail=f"找不到作品 '{anime_name}' 的作品分類數據。")
+        
         anime_tags_set = set(tags)
-        best_match_key = None
-        max_match_count = -1
-        for mapping_key in TAG_COMBINATION_MAPPING.keys():
+        collected_emotion_categories = set()
+
+        # 1. 收集所有匹配到的情感分類
+        for mapping_key, categories_list in TAG_COMBINATION_MAPPING.items():
             mapping_tags_set = set(mapping_key.split('|'))
             if mapping_tags_set.issubset(anime_tags_set):
-                if len(mapping_tags_set) > max_match_count:
-                    max_match_count = len(mapping_tags_set)
-                    best_match_key = mapping_key
-        if not best_match_key:
-            raise HTTPException(status_code=404, detail=f"找不到與作品 '{anime_name}' (分類: {tags}) 匹配的任何情感分類定義。")
-        logging.info(f"  -> 最精確匹配到的作品分類是: '{best_match_key}'")
-        collected_emotion_categories = set(TAG_COMBINATION_MAPPING.get(best_match_key, []))
+                logging.info(f"  -> 匹配到標籤組合 '{mapping_key}'，加入情感分類: {categories_list}")
+                collected_emotion_categories.update(categories_list)
+        
+        # 2. 檢查是否包含戰鬥時段指令
         if "精彩的戰鬥/競技片段" in collected_emotion_categories:
             should_calculate_battle = True
             collected_emotion_categories.remove("精彩的戰鬥/競技片段")
             logging.info(f"  -> 根據 Firestore 設定，將啟用「精彩的戰鬥時段」分析。")
+
+        # 3. 建立真實的情感映射
         for category in collected_emotion_categories:
             if category in EMOTION_CATEGORY_MAPPING:
                 dynamic_emotion_mapping[category] = EMOTION_CATEGORY_MAPPING[category]
+        
+        # 4. 檢查是否有任何分析任務
         if not dynamic_emotion_mapping and not should_calculate_battle:
-            raise HTTPException(status_code=404, detail=f"作品 '{anime_name}' 的最佳匹配 '{best_match_key}' 沒有對應任何有效的分析任務。")
+            raise HTTPException(status_code=404, detail=f"找不到作品 '{anime_name}' (分類: {tags}) 對應的有效情感分類定義。")
     
     try:
         result = get_all_highlights_single_pass(
