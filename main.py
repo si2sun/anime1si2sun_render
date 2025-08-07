@@ -44,11 +44,11 @@ app.add_middleware(
 templates = Jinja2Templates(directory="templates")
 
 # ====== 資料庫與快取配置 ======
-DB_HOST = os.getenv("DB_HOST", "35.223.124.201")
-DB_PORT = os.getenv("DB_PORT", "5432")
-DB_NAME = os.getenv("DB_NAME", "anime1si2sun")
-DB_USER = os.getenv("DB_USER", "postgres")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "lty890509")
+DB_HOST = os.getenv("DB_HOST", "")
+DB_PORT = os.getenv("DB_PORT", "")
+DB_NAME = os.getenv("DB_NAME", "")
+DB_USER = os.getenv("DB_USER", "")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "")
 DATABASE_URL = f"dbname={DB_NAME} user={DB_USER} password={DB_PASSWORD} host={DB_HOST} port={DB_PORT}"
 REDIS_URL = os.getenv("REDIS_URL")
 
@@ -312,7 +312,7 @@ async def get_emotions_api(
 
     ordered_final_result = {}
     if not custom_emotions:
-        priority_categories = ["精彩的戰鬥/競技片段","LIVE/神配樂","正能量片段","虐點/感動","突如其來/震驚","虐點","爆笑","劇情高潮/震撼","最精采/激烈的時刻","TOP 10 彈幕時段"]
+        priority_categories = ["精彩的戰鬥/競技片段","LIVE/神配樂","放閃/心動/害羞","虐點/感動","突如其來/震驚","虐點","爆笑","劇情高潮/震撼","最精采/激烈的時刻","TOP 10 彈幕時段"]
         priority_keys_found = [key for key in priority_categories if key in processed_result]
         other_keys_found = sorted([key for key in processed_result if key not in priority_keys_found])
         final_ordered_keys = priority_keys_found + other_keys_found
@@ -337,6 +337,7 @@ async def get_emotions_api(
 
     logging.info(f"--- 請求 '{anime_name}' 完整分析處理完成，總耗時: {time.time() - request_start_time:.4f} 秒 ---\n")
     return final_output
+
 
 
 
