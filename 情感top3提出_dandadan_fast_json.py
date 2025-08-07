@@ -111,9 +111,9 @@ def get_all_highlights_single_pass(
         # ... (選出 top_n 和避免衝突的邏輯不變) ...
         selected_list = []; episode_quota_tracker = defaultdict(int)
         if category == "TOP 10 彈幕時段": current_top_n = 10
-        elif "劇情高潮/震撼" in category: current_top_n = 10
+        elif "劇情高潮/震撼" in category: current_top_n = 7
         elif "虐點/感動" in category: current_top_n = 7
-        elif category == "精彩的戰鬥/競技片段": current_top_n = 7
+        elif category == "精彩的戰鬥/競技片段" or category == "放閃/心動/害羞": current_top_n = 7
         elif "LIVE/神配樂" in category: current_top_n = 7
         else: current_top_n = 5
         for _, row in highlights_df.iterrows():
@@ -203,6 +203,7 @@ def get_all_highlights_single_pass(
 if __name__ == '__main__':
     # ... (此處的獨立測試腳本完全不變) ...
     pass
+
 
 
 
