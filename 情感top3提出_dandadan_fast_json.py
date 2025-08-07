@@ -177,7 +177,7 @@ def get_all_highlights_single_pass(
             except (ValueError, TypeError): return str(ep)
         
         output_list = []
-        if category == "精彩的戰鬥/競技片段": final_window = 45
+        if category == "精彩的戰鬥/競技片段" or category == "放閃/心動/害羞": final_window = 45
         elif category == "TOP 10 彈幕時段": final_window = analysis_window
         else: final_window = 30
         
@@ -203,4 +203,5 @@ def get_all_highlights_single_pass(
 if __name__ == '__main__':
     # ... (此處的獨立測試腳本完全不變) ...
     pass
+
 
