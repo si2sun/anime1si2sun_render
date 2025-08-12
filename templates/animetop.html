@@ -50,22 +50,24 @@
             transition: background-color 0.3s ease, color 0.3s ease;
         }
         
+        /* --- 修正開始 --- */
         .theme-switch {
-            position: fixed; /* 將元素固定在視窗中 */
-            top: 15px; /* 距離頂部 15px */
-            right: 20px; /* 距離右側 20px */
-            z-index: 1001; /* 確保它在最上層 */
-            width: 50px;
-            height: 26px;
-            background-color: var(--bg-medium);
-            border-radius: 50px;
-            display: flex;
-            align-items: center;
-            cursor: pointer;
-            padding: 3px;
-            box-shadow: 0 2px 6px var(--shadow-medium);
-            transition: background-color 0.3s ease;
+            position: fixed; /* 將元素固定在視窗中 */
+            top: 15px; /* 距離頂部 15px */
+            right: 20px; /* 距離右側 20px */
+            z-index: 1001; /* 確保它在最上層 */
+            width: 50px;
+            height: 26px;
+            background-color: var(--bg-medium);
+            border-radius: 50px;
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            padding: 3px;
+            box-shadow: 0 2px 6px var(--shadow-medium);
+            transition: background-color 0.3s ease;
         }
+        /* --- 修正結束 --- */
 
         .theme-switch .slider {
             width: 20px;
@@ -770,4 +772,5 @@
     </script>
 </body>
 </html>
+
 
