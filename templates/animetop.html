@@ -64,11 +64,10 @@
             cursor: pointer;
             padding: 3px;
             box-shadow: 0 2px 6px var(--shadow-medium);
-            /* 關鍵修改 1：增加 transition 讓移動有動畫效果 */
-            transition: top 0.3s ease-in-out;
+            /* 已移除 transition 屬性 */
         }
 
-        /* 關鍵修改 2：這個新的 class 會讓按鈕向上移出畫面外 */
+        /* 這個 class 會讓按鈕向上移出畫面外 */
         .theme-switch--hidden {
             top: -60px; /* 一個比按鈕自身高度還大的負值 */
         }
@@ -704,22 +703,17 @@
             }
         }
 
-        // ====== 關鍵修改 3：滾動時隱藏/顯示主題切換按鈕 ======
+        // ====== 滾動時隱藏/顯示主題切換按鈕 (JavaScript 邏輯不變) ======
         const themeSwitch = document.querySelector('.theme-switch');
         let lastScrollTop = 0;
 
         window.addEventListener('scroll', function() {
-            // 獲取當前的滾動距離
             let scrollTop = window.pageYOffset || document.documentElement.scrollTop;
-
             if (scrollTop > lastScrollTop) {
-                // 向下滾動
                 themeSwitch.classList.add('theme-switch--hidden');
             } else {
-                // 向上滾動
                 themeSwitch.classList.remove('theme-switch--hidden');
             }
-            // 更新上一次的滾動位置
             lastScrollTop = scrollTop <= 0 ? 0 : scrollTop;
         }, false);
     </script>
