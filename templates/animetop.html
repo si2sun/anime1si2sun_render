@@ -51,20 +51,20 @@
         }
         
         .theme-switch {
-            position: fixed;
-            top: 15px;
-            right: 20px;
-            width: 50px;
-            height: 26px;
-            background-color: var(--bg-medium);
-            border-radius: 50px;
-            display: flex;
-            align-items: center;
-            cursor: pointer;
-            padding: 3px;
-            box-shadow: 0 2px 6px var(--shadow-medium);
-            transition: background-color 0.3s ease;
-            z-index: 1001;
+            position: fixed; /* 將元素固定在視窗中 */
+            top: 15px; /* 距離頂部 15px */
+            right: 20px; /* 距離右側 20px */
+            z-index: 1001; /* 確保它在最上層 */
+            width: 50px;
+            height: 26px;
+            background-color: var(--bg-medium);
+            border-radius: 50px;
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            padding: 3px;
+            box-shadow: 0 2px 6px var(--shadow-medium);
+            transition: background-color 0.3s ease;
         }
 
         .theme-switch .slider {
@@ -770,3 +770,4 @@
     </script>
 </body>
 </html>
+
