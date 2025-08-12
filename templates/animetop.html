@@ -50,12 +50,11 @@
             transition: background-color 0.3s ease, color 0.3s ease;
         }
         
-        /* --- 修正開始 --- */
         .theme-switch {
-            position: fixed; /* 將元素固定在視窗中 */
-            top: 15px; /* 距離頂部 15px */
-            right: 20px; /* 距離右側 20px */
-            z-index: 1001; /* 確保它在最上層 */
+            position: fixed;
+            top: 15px;
+            right: 20px;
+            z-index: 1001;
             width: 50px;
             height: 26px;
             background-color: var(--bg-medium);
@@ -65,9 +64,14 @@
             cursor: pointer;
             padding: 3px;
             box-shadow: 0 2px 6px var(--shadow-medium);
-            transition: background-color 0.3s ease;
+            /* 關鍵修改 1：增加 transition 讓移動有動畫效果 */
+            transition: top 0.3s ease-in-out;
         }
-        /* --- 修正結束 --- */
+
+        /* 關鍵修改 2：這個新的 class 會讓按鈕向上移出畫面外 */
+        .theme-switch--hidden {
+            top: -60px; /* 一個比按鈕自身高度還大的負值 */
+        }
 
         .theme-switch .slider {
             width: 20px;
@@ -123,19 +127,17 @@
             letter-spacing: 0.03em;
         }
 
-        /* 新增：深色模式下標題字體與按鈕字體為柔和的白色 */
         body.dark-theme h1,
         body.dark-theme button {
             color: var(--text-light);
         }
 
-        /* 關鍵修改：深色模式下搜尋框的背景與文字顏色 */
         body.dark-theme input[type="text"] {
             background-color: var(--bg-medium);
-            color: var(--text-dark); /* 讓輸入的字體是白色 */
+            color: var(--text-dark);
         }
         body.dark-theme input[type="text"]::placeholder {
-            color: var(--text-light); /* 提示文字則用柔和的淺灰色 */
+            color: var(--text-light);
         }
         
         .input-container {
@@ -202,7 +204,6 @@
             transition: background-color 0.2s ease;
         }
 
-        /* 關鍵修改：深色模式下搜尋建議清單的文字顏色 */
         body.dark-theme .suggestions-list {
             background-color: var(--bg-medium);
         }
@@ -215,7 +216,6 @@
             color: var(--primary-blue);
         }
 
-        /* 自訂多選卷軸的樣式 */
         .custom-select-container {
             position: relative;
             max-width: 630px;
@@ -235,10 +235,9 @@
             user-select: none;
         }
 
-        /* 關鍵修改：深色模式下自訂選單的背景與文字顏色 */
         body.dark-theme .select-box {
             background-color: var(--bg-medium);
-            color: var(--text-light); /* 讓顯示的文字是柔和的淺灰色 */
+            color: var(--text-light);
         }
         body.dark-theme .select-box .selected-display {
             color: var(--text-light);
@@ -287,7 +286,6 @@
             display: block;
         }
 
-        /* 關鍵修改：深色模式下選單選項的背景與文字顏色 */
         body.dark-theme .options-container {
             background-color: var(--bg-medium);
         }
@@ -412,10 +410,8 @@
         function toggleTheme() {
             document.body.classList.toggle('dark-theme');
         }
-        // 彈出視窗函數 (不變)
         function openModal(message, bahamutUrl) {
             let fullMessage = message;
-
             if (bahamutUrl) {
                 bahamutLink.href = bahamutUrl;
                 bahamutLink.style.display = 'inline-block';
@@ -432,7 +428,6 @@
         }
         window.onclick = function(event) { if (event.target == modal) { closeModal(); } }
 
-        // ====== 搜尋預測相關邏輯 (不變) ======
         function debounce(func, delay) {
             return function(...args) {
                 clearTimeout(debounceTimer);
@@ -442,13 +437,11 @@
         animeNameInput.addEventListener('input', debounce(async (event) => {
             const query = event.target.value.trim();
             currentSuggestionIndex = -1;
-
             if (query.length < 1) {
                 suggestionsList.style.display = 'none';
                 suggestionsList.innerHTML = '';
                 return;
             }
-
             try {
                 const response = await fetch(`/search_anime_names?query=${encodeURIComponent(query)}`);
                 if (!response.ok) {
@@ -457,7 +450,6 @@
                     return;
                 }
                 const suggestions = await response.json();
-
                 renderSuggestions(suggestions);
             } catch (error) {
                 console.error('獲取搜尋建議時發生錯誤:', error);
@@ -467,7 +459,6 @@
         animeNameInput.addEventListener('keydown', (event) => {
             const items = Array.from(suggestionsList.children);
             if (items.length === 0) return;
-
             if (event.key === 'ArrowDown') {
                 event.preventDefault();
                 currentSuggestionIndex = (currentSuggestionIndex + 1) % items.length;
@@ -506,7 +497,6 @@
                 suggestionsList.style.display = 'none';
                 return;
             }
-
             suggestions.forEach(name => {
                 const li = document.createElement('li');
                 li.textContent = name;
@@ -519,10 +509,6 @@
             suggestionsList.style.display = 'block';
         }
 
-
-        // ====== 新增：自訂選擇器相關邏輯 ======
-
-        // 頁面載入時，從後端獲取情感分類並填充選項
         document.addEventListener('DOMContentLoaded', async () => {
             try {
                 const response = await fetch('/get_emotion_categories');
@@ -531,19 +517,13 @@
                 populateEmotionOptions(categories);
             } catch (error) {
                 console.error("獲取情感分類失敗:", error);
-                // 可以在此處向使用者顯示錯誤
             }
         });
 
-        // 填充選項到自訂選擇器
         function populateEmotionOptions(categories) {
-            optionsContainer.innerHTML = ''; // 清空
-
-            // 創建 "預設" 選項
+            optionsContainer.innerHTML = '';
             const defaultOption = createOption('預設', 'default', true);
             optionsContainer.appendChild(defaultOption);
-
-            // 創建其他情感分類選項
             categories.forEach(category => {
                 const option = createOption(category, category, false);
                 optionsContainer.appendChild(option);
@@ -551,11 +531,9 @@
             updateSelectedDisplay();
         }
 
-        // 創建單個選項的輔助函數
         function createOption(text, value, isChecked) {
             const optionDiv = document.createElement('div');
             optionDiv.className = 'option';
-
             const label = document.createElement('label');
             const checkbox = document.createElement('input');
             checkbox.type = 'checkbox';
@@ -564,65 +542,50 @@
             if (value === 'default') {
                 checkbox.id = 'default-checkbox';
             }
-
             checkbox.addEventListener('change', handleCheckboxChange);
-
             label.appendChild(checkbox);
             label.appendChild(document.createTextNode(text));
             optionDiv.appendChild(label);
-
             return optionDiv;
         }
 
-        // 處理 checkbox 狀態改變的邏輯
         function handleCheckboxChange(event) {
             const defaultCheckbox = document.getElementById('default-checkbox');
             const allCheckboxes = optionsContainer.querySelectorAll('input[type="checkbox"]');
             const changedCheckbox = event.target;
-
             if (changedCheckbox.id === 'default-checkbox' && changedCheckbox.checked) {
-                // 如果點擊了 "預設" 並使其被選中，取消所有其他選項
                 allCheckboxes.forEach(cb => {
                     if (cb.id !== 'default-checkbox') cb.checked = false;
                 });
             } else if (changedCheckbox.id !== 'default-checkbox' && changedCheckbox.checked) {
-                // 如果點擊了任何其他選項並使其被選中，取消 "預設"
                 defaultCheckbox.checked = false;
             }
-
-            // 如果所有自訂選項都取消了，自動選回 "預設"
             const customSelected = Array.from(allCheckboxes).some(cb => cb.id !== 'default-checkbox' && cb.checked);
             if (!customSelected) {
                 defaultCheckbox.checked = true;
             }
-
             updateSelectedDisplay();
         }
 
-        // 更新選擇器顯示的文字
         function updateSelectedDisplay() {
             const allCheckboxes = optionsContainer.querySelectorAll('input[type="checkbox"]');
             const selected = Array.from(allCheckboxes)
                 .filter(cb => cb.checked)
                 .map(cb => cb.value);
-
             if (selected.includes('default')) {
                 selectedDisplay.textContent = '預設';
             } else if (selected.length > 0) {
                 selectedDisplay.textContent = `已選擇 ${selected.length} 項`;
             } else {
-                // 理論上不會發生，因為會自動選回預設
                 selectedDisplay.textContent = '選擇自訂項目';
             }
         }
 
-        // 點擊選擇器框，展開/收合選項
         selectBox.addEventListener('click', () => {
             selectBox.classList.toggle('open');
             optionsContainer.classList.toggle('active');
         });
 
-        // 點擊頁面其他地方，收合選項
         document.addEventListener('click', (event) => {
             if (!customSelect.contains(event.target)) {
                 selectBox.classList.remove('open');
@@ -633,70 +596,53 @@
             }
         });
 
-
-        // ====== 主要邏輯函數 (已更新以處理自訂選項) ======
         async function getEmotionHighlights() {
             const animeName = animeNameInput.value.trim();
             const resultsDiv = document.getElementById('results');
             const errorMessageDiv = document.getElementById('errorMessage');
             const loadingMessageDiv = document.getElementById('loadingMessage');
-
             resultsDiv.innerHTML = '';
             errorMessageDiv.style.display = 'none';
             loadingMessageDiv.style.display = 'block';
             suggestionsList.style.display = 'none';
-            optionsContainer.classList.remove('active'); // 查詢時收合選項
+            optionsContainer.classList.remove('active');
             selectBox.classList.remove('open');
-
             if (!animeName) {
                 errorMessageDiv.textContent = '請輸入動漫名稱！';
                 errorMessageDiv.style.display = 'block';
                 loadingMessageDiv.style.display = 'none';
                 return;
             }
-
-            // <<<<<<< 關鍵修改：建構 API URL >>>>>>>
             let apiUrl = `/get_emotions?anime_name=${encodeURIComponent(animeName)}`;
-
             const selectedOptions = Array.from(optionsContainer.querySelectorAll('input:checked')).map(cb => cb.value);
-
-            // 如果選擇的不是 "預設"，則將自訂選項加入 URL
             if (!selectedOptions.includes('default') && selectedOptions.length > 0) {
                 const params = new URLSearchParams();
                 selectedOptions.forEach(option => params.append('custom_emotions', option));
                 apiUrl += `&${params.toString()}`;
             }
-
             try {
-                console.log(`正在請求 API: ${apiUrl}`); // Debugging
+                console.log(`正在請求 API: ${apiUrl}`);
                 const response = await fetch(apiUrl);
                 loadingMessageDiv.style.display = 'none';
-
                 if (!response.ok) {
                     const errorData = await response.json();
                     errorMessageDiv.textContent = errorData.detail || '查詢失敗，請稍後再試。';
                     errorMessageDiv.style.display = 'block';
                     return;
                 }
-
                 const data = await response.json();
-
-                // (以下渲染邏輯與原版幾乎相同，無需修改)
                 const youtubeEpisodeUrls = data.youtube_episode_urls;
                 const bahamutEpisodeUrls = data.bahamut_episode_urls;
                 const coverImageUrl = data.cover_image_url;
-
                 if (!youtubeEpisodeUrls && !bahamutEpisodeUrls) {
                     errorMessageDiv.textContent = `抱歉，伺服器未配置完整的影片播放連結。`;
                     errorMessageDiv.style.display = 'block';
                     return;
                 }
-
                 const emotionData = { ...data };
                 delete emotionData.youtube_episode_urls;
                 delete emotionData.bahamut_episode_urls;
                 delete emotionData.cover_image_url;
-
                 if (coverImageUrl) {
                     const coverImageContainer = document.createElement('div');
                     coverImageContainer.className = 'cover-image-container';
@@ -707,48 +653,37 @@
                     coverImageContainer.appendChild(coverImage);
                     resultsDiv.appendChild(coverImageContainer);
                 }
-
                 const emotionCategoriesDiv = document.createElement('div');
                 emotionCategoriesDiv.className = 'emotion-categories-wrapper';
-
                 for (const emotion in emotionData) {
                     if (!Array.isArray(emotionData[emotion])) {
                         console.warn(`Skipping non-array property in emotionData: ${emotion}`);
                         continue;
                     }
-
                     const emotionCategoryDiv = document.createElement('div');
                     emotionCategoryDiv.className = 'emotion-category';
-
                     const h2 = document.createElement('h2');
                     h2.textContent = emotion;
                     emotionCategoryDiv.appendChild(h2);
-
                     emotionData[emotion].forEach(item => {
                         const highlightItem = document.createElement('div');
                         highlightItem.className = 'highlight-item';
-
                         const episodeSpan = document.createElement('span');
                         episodeSpan.textContent = `集數: ${item.集數}`;
                         highlightItem.appendChild(episodeSpan);
-
                         const timeDisplaySpan = document.createElement('span');
                         timeDisplaySpan.className = 'time-link';
                         timeDisplaySpan.textContent = `時段: ${item.時段}`;
                         timeDisplaySpan.onclick = () => {
                             let targetUrl = null;
                             let bahamutFallbackUrl = null;
-
                             if (youtubeEpisodeUrls && youtubeEpisodeUrls[item.集數]) {
                                 const youtubeVideoId = youtubeEpisodeUrls[item.集數];
-                                // 使用標準的 YouTube 嵌入/觀看連結格式
                                 targetUrl = `https://www.youtube.com/watch?v=${youtubeVideoId}&t=${item.start_second}s`;
                             }
-
                             if (!targetUrl && bahamutEpisodeUrls && bahamutEpisodeUrls[item.集數]) {
                                 bahamutFallbackUrl = bahamutEpisodeUrls[item.集數];
                             }
-
                             if (targetUrl) {
                                 window.open(targetUrl, '_blank');
                             } else {
@@ -756,7 +691,6 @@
                             }
                         };
                         highlightItem.appendChild(timeDisplaySpan);
-
                         emotionCategoryDiv.appendChild(highlightItem);
                     });
                     emotionCategoriesDiv.appendChild(emotionCategoryDiv);
@@ -769,8 +703,28 @@
                 console.error('Fetch error:', error);
             }
         }
+
+        // ====== 關鍵修改 3：滾動時隱藏/顯示主題切換按鈕 ======
+        const themeSwitch = document.querySelector('.theme-switch');
+        let lastScrollTop = 0;
+
+        window.addEventListener('scroll', function() {
+            // 獲取當前的滾動距離
+            let scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+
+            if (scrollTop > lastScrollTop) {
+                // 向下滾動
+                themeSwitch.classList.add('theme-switch--hidden');
+            } else {
+                // 向上滾動
+                themeSwitch.classList.remove('theme-switch--hidden');
+            }
+            // 更新上一次的滾動位置
+            lastScrollTop = scrollTop <= 0 ? 0 : scrollTop;
+        }, false);
     </script>
 </body>
 </html>
+
 
 
